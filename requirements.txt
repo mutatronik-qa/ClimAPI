@@ -1,5 +1,21 @@
+# Backend dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
+
+# Data processing
 pandas>=2.0.0
 requests>=2.31.0
+
+# Caching
+diskcache>=5.6.0
+
+# Logging
+python-json-logger>=2.0.0
+
+# Original dashboard (optional)
 streamlit>=1.28.0
 plotly>=5.17.0
 

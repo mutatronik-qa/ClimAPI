@@ -7,8 +7,12 @@ en formato CSV y cargarlos posteriormente.
 
 import pandas as pd
 from pathlib import Path
-from typing import Optional
-from datetime import datetime
+from typing import Optional, Any, Dict
+from datetime import datetime, timedelta
+import diskcache as dc
+import hashlib
+import json
+from functools import wraps
 
 
 def save_to_csv(
@@ -81,4 +85,104 @@ def load_from_csv(filepath: str) -> pd.DataFrame:
     df = pd.read_csv(filepath, index_col=0, parse_dates=True)
     
     return df
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+class CacheManager:
+    def __init__(self, cache_dir="cache", ttl_minutes=15):
+        self.cache = dc.Cache(cache_dir)
+        self.ttl = timedelta(minutes=ttl_minutes)
+        logger.info(f"CacheManager inicializado. Directorio: {cache_dir}, TTL: {ttl_minutes} minutos.")
+
+    def _generate_key(self, prefix, *args, **kwargs):
+        # Genera una clave única basada en los argumentos
+        key_components = [prefix] + [str(arg) for arg in args] + [f"{k}={v}" for k, v in sorted(kwargs.items())]
+        return hashlib.md5("_".join(key_components).encode('utf-8')).hexdigest()
+
+    def get(self, key):
+        data = self.cache.get(key)
+        if data:
+            timestamp, value = data
+            if datetime.now() - timestamp < self.ttl:
+                logger.debug(f"Cache hit para la clave: {key}")
+                return value
+            else:
+                logger.debug(f"Cache expirada para la clave: {key}")
+                self.cache.delete(key)
+        logger.debug(f"Cache miss para la clave: {key}")
+        return None
+
+    def set(self, key, value):
+        self.cache.set(key, (datetime.now(), value))
+        logger.debug(f"Datos guardados en caché para la clave: {key}")
+
+    def get_weather_data(self, latitude, longitude, timezone):
+        key = self._generate_key("weather_raw", latitude, longitude, timezone)
+        cached_data = self.get(key)
+        if cached_data:
+            return json.loads(cached_data)
+        return None
+
+    def set_weather_data(self, latitude, longitude, timezone, data):
+        key = self._generate_key("weather_raw", latitude, longitude, timezone)
+        self.set(key, json.dumps(data))
+
+    def get_processed_data(self, latitude, longitude, timezone):
+        key = self._generate_key("weather_processed", latitude, longitude, timezone)
+        cached_data = self.get(key)
+        if cached_data is not None:
+            try:
+                # Asumiendo que el DataFrame se guarda como JSON o similar
+                # y necesita ser reconstruido. Para simplificar, si se guarda
+                # como string JSON, se convierte de nuevo a DataFrame.
+                # Esto puede requerir un formato específico de serialización/deserialización.
+                # Por ahora, un ejemplo simple si se guarda como dict y se convierte a DF.
+                return pd.read_json(cached_data, orient='split')
+            except Exception as e:
+                logger.error(f"Error al deserializar DataFrame de caché: {e}")
+                return None
+        return None
+
+    def set_processed_data(self, latitude, longitude, timezone, dataframe):
+        key = self._generate_key("weather_processed", latitude, longitude, timezone)
+        # Guardar DataFrame como JSON string para compatibilidad
+        self.set(key, dataframe.to_json(orient='split'))
+
+    def clear(self):
+        self.cache.clear()
+        logger.info("Caché limpiada.")
+        return {"message": "Cache cleared", "timestamp": datetime.now().isoformat()}
+
+    def get_stats(self):
+        stats = {
+            "entries": len(self.cache),
+            "size": self.cache.volume(), # Retorna el tamaño en bytes
+            "path": self.cache.directory,
+            "ttl_minutes": self.ttl.total_seconds() / 60
+        }
+        logger.info(f"Estadísticas de caché: {stats}")
+        return stats
+
+def cache_weather_data(func):
+    def wrapper(*args, **kwargs):
+        # Asumiendo que el primer argumento es 'self' si es un método de clase,
+        # o que los argumentos relevantes para la clave están en args/kwargs.
+        # Para este ejemplo, simplificamos asumiendo que los args son lat, lon, tz.
+        latitude = kwargs.get('latitude') or args[0]
+        longitude = kwargs.get('longitude') or args[1]
+        timezone = kwargs.get('timezone') or args[2] if len(args) > 2 else "America/Bogota"
+
+        cache_manager = CacheManager() # Esto debería ser una instancia global o pasada
+
+        cached_data = cache_manager.get_weather_data(latitude, longitude, timezone)
+        if cached_data:
+            return cached_data
+
+        result = func(*args, **kwargs)
+        cache_manager.set_weather_data(latitude, longitude, timezone, result)
+        return result
+    return wrapper
 

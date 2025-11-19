@@ -1,24 +1,186 @@
 """
-Script principal para orquestar el flujo completo del proyecto.
+Backend FastAPI para Clima Dashboard
 
 Este script:
-1. Consume datos desde la API de Open-Meteo
-2. Procesa y transforma los datos
-3. Guarda los datos en CSV
-4. Opcionalmente, inicia el dashboard
+1. Configura la API FastAPI con CORS
+2. Define los endpoints para datos meteorológicos
+3. Integra múltiples fuentes de datos
+4. Proporciona documentación automática
 """
 
 import json
 import sys
+import os
+import logging
 from pathlib import Path
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+from pydantic import BaseModel
 
 # Agregar el directorio raíz al path para importar módulos
 sys.path.append(str(Path(__file__).parent))
 
 from data_sources.open_meteo import get_weather_data, validate_coordinates
 from processing.transform import process_weather_data
-from processing.storage import save_to_csv
+from processing.storage import save_to_csv, CacheManager
 
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Inicializar caché global
+CACHE_TTL = int(os.getenv('CACHE_TTL_MINUTES', '15'))
+CACHE_DIR = os.getenv('CACHE_DIR', 'cache')
+
+cache_manager = CacheManager(ttl_minutes=CACHE_TTL)
+
+# Crear directorios necesarios
+Path(CACHE_DIR).mkdir(exist_ok=True)
+Path("data").mkdir(exist_ok=True)
+
+# Crear aplicación FastAPI
+app = FastAPI(
+    title="Clima Dashboard API",
+    description="API para dashboard meteorológico con múltiples fuentes de datos",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Next.js frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Modelos Pydantic para respuestas
+class WeatherData(BaseModel):
+    time: str
+    temperature: float
+    humidity: float
+    precipitation: float
+    wind_speed: float
+
+class LocationRequest(BaseModel):
+    latitude: float
+    longitude: float
+    timezone: str = "America/Bogota"
+
+class WeatherResponse(BaseModel):
+    location: LocationRequest
+    data: List[WeatherData]
+    source: str
+    timestamp: str
+
+# Endpoints de la API
+@app.get("/", tags=["root"])
+async def root():
+    return {"message": "Clima Dashboard API", "version": "1.0.0"}
+
+@app.get("/api/v1/health", tags=["health"])
+async def health_check():
+    return {"status": "healthy", "service": "clima-dashboard-api"}
+
+@app.post("/api/v1/weather/current", response_model=WeatherResponse, tags=["weather"])
+async def get_current_weather(location: LocationRequest):
+    """
+    Obtiene datos meteorológicos actuales para una ubicación específica
+    """
+    try:
+        # Validar coordenadas
+        validate_coordinates(location.latitude, location.longitude)
+        
+        # Intentar obtener datos procesados de caché
+        cached_df = cache_manager.get_processed_data(
+            location.latitude, 
+            location.longitude, 
+            location.timezone
+        )
+        
+        if cached_df is not None:
+            print(" Usando datos desde caché")
+            df = cached_df
+            source = "Open-Meteo (Cached)"
+        else:
+            print(" Obteniendo datos frescos desde API")
+            # Obtener datos de la API
+            api_response = get_weather_data(
+                latitude=location.latitude,
+                longitude=location.longitude,
+                timezone=location.timezone
+            )
+            
+            # Procesar datos
+            df = process_weather_data(api_response)
+            
+            # Guardar en caché
+            cache_manager.set_processed_data(
+                location.latitude, 
+                location.longitude, 
+                location.timezone, 
+                df
+            )
+            source = "Open-Meteo"
+        
+        # Convertir a formato de respuesta
+        weather_data = []
+        for index, row in df.head(24).iterrows():  # Últimas 24 horas
+            weather_data.append(WeatherData(
+                time=index.isoformat(),
+                temperature=row['temperatura_c'],
+                humidity=row['humedad_porcentaje'],
+                precipitation=row['precipitacion_mm'],
+                wind_speed=row['velocidad_viento_kmh']
+            ))
+        
+        return WeatherResponse(
+            location=location,
+            data=weather_data,
+            source=source,
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener datos: {str(e)}")
+
+@app.get("/api/v1/cache/stats", tags=["cache"])
+async def get_cache_stats():
+    """
+    Obtiene estadísticas del sistema de caché
+    """
+    return cache_manager.get_stats()
+
+@app.delete("/api/v1/cache", tags=["cache"])
+async def clear_cache():
+    """
+    Limpia toda la caché
+    """
+    cache_manager.clear()
+    return {"message": "Caché limpiada exitosamente"}
+
+@app.get("/api/v1/locations/default", tags=["locations"])
+async def get_default_location():
+    """
+    Retorna la ubicación por defecto (Medellín)
+    """
+    return {
+        "latitude": 6.244,
+        "longitude": -75.581,
+        "timezone": "America/Bogota",
+        "city": "Medellín",
+        "country": "Colombia"
+    }
 
 def load_config(config_path: str = "config/settings.json") -> dict:
     """
@@ -145,4 +307,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    import os
+    import sys
+    
+    # Verificar si se debe ejecutar como API FastAPI o como script original
+    if len(sys.argv) > 1 and sys.argv[1] == "api":
+        # Ejecutar como servidor FastAPI
+        print("🚀 Iniciando servidor FastAPI...")
+        print("📖 Documentación disponible en: http://localhost:8000/docs")
+        uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    else:
+        # Ejecutar script original
+        main()
