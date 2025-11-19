@@ -8,20 +8,19 @@ Este script:
 4. Proporciona documentación automática
 """
 
+import pandas as pd
+import numpy as np
+import requests
 import json
-import sys
 import os
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from typing import Optional, Dict, Any, List
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from typing import Dict, Any, Optional, List
-from datetime import datetime
-from pydantic import BaseModel
-
-# Agregar el directorio raíz al path para importar módulos
-sys.path.append(str(Path(__file__).parent))
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 
 from data_sources.open_meteo import get_weather_data, validate_coordinates
 from processing.transform import process_weather_data
