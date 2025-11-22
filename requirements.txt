@@ -8,6 +8,7 @@ python-multipart>=0.0.6
 # Data processing
 pandas
 requests
+bs4
 
 # Caching
 diskcache>=5.6.0
