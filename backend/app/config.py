@@ -4,9 +4,9 @@ import os
 
 class Settings(BaseSettings):
     # API Keys
-    OPENWEATHER_API_KEY: str = ""
-    METEOSOURCE_API_KEY: str = ""
-    METEOBLUE_API_KEY: str = ""
+    OPENWEATHER_API_KEY: str = "32bdf300d39d022bb540ccbb5ea50970"
+    METEOSOURCE_API_KEY: str = "o5fwbofuq1dvdhryfqqkcj1ahas39bsu2njevaqu"
+    METEOBLUE_API_KEY: str = "Z2AnKNoxLJul08UQ"
     
     # AWS Credentials
     AWS_ACCESS_KEY_ID: str = ""
