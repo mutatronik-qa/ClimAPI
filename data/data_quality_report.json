@@ -1,0 +1,11 @@
+{
+  "source": "combined",
+  "timestamp": "2025-12-07T05:31:51.099888",
+  "status": "error",
+  "message": "DataFrame vac\u00edo",
+  "total_records": 0,
+  "summary": {
+    "overall_quality": "Unknown",
+    "missing_data_percent": 0.0
+  }
+}

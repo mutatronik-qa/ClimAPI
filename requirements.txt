@@ -4,26 +4,24 @@ uvicorn
 pydantic
 pydantic-settings
 python-multipart
-
 # Data processing
 pandas
 requests
 bs4
 numpy
-
 # Caching
 diskcache
-
+nbformat
 # Logging
 python-json-logger
-
 # Original dashboard (optional)
 streamlit
 plotly
-
 # Peticiones HTTP
+boto3 
+arm-pyart 
+xradar
 httpx
-
 # Desarrollo
 pytest
 pytest-asyncio
@@ -33,7 +31,6 @@ mypy
 # Seguridad
 python-jose
 passlib
-
 # CORS
 python-multipart
 python-dotenv

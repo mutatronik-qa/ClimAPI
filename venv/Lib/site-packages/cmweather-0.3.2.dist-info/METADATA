@@ -1,0 +1,66 @@
+Metadata-Version: 2.1
+Name: cmweather
+Version: 0.3.2
+Summary: A library of useful colormaps when visualizing weather and climate data, with numerous color vision deficiency friendly options
+Home-page: https://github.com/openradar/cmweather
+Maintainer: Open Radar Community
+Maintainer-email: mgrover@anl.gov
+License: MIT license
+Project-URL: Documentation, https://github.com/openradar/cmweather
+Project-URL: Source, https://github.com/openradar/cmweather
+Project-URL: Tracker, https://github.com/openradar/cmweather/issues
+Keywords: cmweather
+Classifier: Development Status :: 2 - Pre-Alpha
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Natural Language :: English
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Topic :: Scientific/Engineering
+Classifier: Operating System :: OS Independent
+Classifier: Intended Audience :: Science/Research
+Requires-Python: >=3.6
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+
+# cmweather
+
+[![CI Status](https://github.com/openradar/cmweather/actions/workflows/ci.yaml/badge.svg)](https://github.com/openradar/cmweather/actions/workflows/ci.yaml) [![code-style](https://github.com/openradar/cmweather/actions/workflows/linting.yaml/badge.svg)](https://github.com/openradar/cmweather/actions/workflows/linting.yaml) [![CodeCov](https://img.shields.io/codecov/c/github/openradar/cmweather.svg?style=for-the-badge)](https://codecov.io/gh/openradar/cmweather)[![Conda Package](https://anaconda.org/conda-forge/cmweather/badges/version.svg)](https://anaconda.org/conda-forge/cmweather)
+
+## Motivation
+
+The motivation for this package is to contain weather maps relevant to the weather and climate community. There are **many** colormaps that are unique to the weather/climate community that are not included in core libraries such as [matplotlib](https://matplotlib.org/). This is also meant to be a community collaboration, across multiple domain-specific packages (ex. MetPy, GeoCAT, Py-ART). It is lightweight, easy to install, and we encourage contributions from across the community!
+
+While not all of the colormaps are color vision deficiency (CVD) friendly, we do include CVD friendly colormaps, and encourage users to use these when possible.
+
+## Installation
+
+cmweather can be found on both PyPI and conda-forge, installable using
+
+```bash
+mamba install cmweather
+```
+
+or
+
+```bash
+pip install cmweather
+```
+
+### Development Installation
+
+For a development install, do the following in the repository directory:
+
+```bash
+conda env update -f ci/environment.yml
+conda activate cmweather-dev
+python -m pip install -e .
+```
+
+Also, please install `pre-commit` hooks from the root directory of the created project by running:
+
+```
+pre-commit install
+```

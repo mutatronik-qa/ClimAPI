@@ -1,1 +1,3 @@
-"""Tests unitarios"""
+"""
+Módulo de pruebas para ClimAPI.
+"""

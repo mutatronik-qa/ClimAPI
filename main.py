@@ -21,12 +21,12 @@ Módulos principales:
 - backend/: Implementación de la API FastAPI
 """
 
-import pandas as pd
-import numpy as np
-import requests
-import json
 import os
+import pandas as pd
+import asyncio
+import json
 import logging
+import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -35,9 +35,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
+from data_sources.meteoblue import MeteoBlueService, fetch_weather_sync
+from data_sources.openweathermap import OpenWeatherMap
+from processing.data_processor import DataProcessor
 from data_sources.open_meteo import get_weather_data, validate_coordinates
 from processing.transform import process_weather_data
 from processing.storage import save_to_csv, CacheManager
+from processing.data_diagnostics import DataDiagnostics
+from processing.data_normalizer import DataNormalizer, DataValidator
+from processing.data_quality_report import DataQualityReport
+from processing.api_data_extractors import APIDataExtractor
+
+from config.settings import settings
+#from src.data_sources.siata import SIATAClient
+#from src.data_sources.radar_ideam import RadarIDEAMClient
 
 # Configuración de logging
 logging.basicConfig(
@@ -93,7 +104,47 @@ class WeatherResponse(BaseModel):
     source: str
     timestamp: str
 
-# Endpoints de la API
+# Instanciar clientes
+METEOBLUE_CFG = {
+    "api_key": os.getenv("METEOBLUE_API_KEY"),
+    "base_url": os.getenv("METEOBLUE_BASE_URL", "https://my.meteoblue.com"),
+    "shared_secret": os.getenv("METEOBLUE_SHARED_SECRET"),
+    "endpoint": os.getenv("METEOBLUE_ENDPOINT", "/packages/basic-1h"),
+    "ttl_seconds": int(os.getenv("METEOBLUE_TTL_SECONDS", "3600"))
+}
+meteoblue_client = MeteoBlueService(METEOBLUE_CFG)
+
+OWM_CFG = {
+    "api_key": os.getenv("OPENWEATHER_API_KEY"),
+    "base_url": os.getenv("OPENWEATHER_BASE_URL", "http://api.openweathermap.org/data/2.5/"),
+    "units": os.getenv("OPENWEATHER_UNITS", "metric"),
+    "ttl_seconds": int(os.getenv("CACHE_TTL_MINUTES", "15")) * 60
+}
+owm_client = OpenWeatherMap(OWM_CFG)
+
+siata_client = SIATAClient({"api_url": settings.SIATA_API_URL})
+radar_client = RadarIDEAMClient({
+    "bucket": settings.IDEAM_RADAR_BUCKET,
+    "region": settings.IDEAM_RADAR_REGION
+})
+
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def _save_api_csv(filepath: Path, records: List[Dict[str, Any]], timestamp_key: str = "timestamp"):
+    """
+    Guarda una lista de records (dicts) como CSV con índice datetime UTC.
+    """
+    if not records:
+        return
+    df = pd.DataFrame(records)
+    if timestamp_key in df.columns:
+        df[timestamp_key] = pd.to_datetime(df[timestamp_key], utc=True, errors='coerce')
+        df = df.dropna(subset=[timestamp_key])
+        df = df.set_index(timestamp_key)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(filepath)
+
 @app.get("/", tags=["root"])
 async def root():
     return {"message": "Clima Dashboard API", "version": "1.0.0"}
@@ -193,6 +244,15 @@ async def get_default_location():
         "city": "Medellín",
         "country": "Colombia"
     }
+@app.get("/api/v1/weather/siata")
+async def get_siata_weather(lat: float, lon: float):
+    data = siata_client.get_weather_current()
+    return {"data": data, "source": "siata"}
+
+@app.get("/api/v1/radar/latest")
+async def get_latest_radar():
+    data = radar_client.get_latest_scan()
+    return {"data": data, "source": "ideam_radar"}
 
 def load_config(config_path: str = "config/settings.json") -> dict:
     """
@@ -227,6 +287,13 @@ def load_config(config_path: str = "config/settings.json") -> dict:
         sys.exit(1)
 
 
+# Añadir import seguro del analizador de notebooks
+try:
+    from scripts.ipynb_analyzer import analyze_notebooks  # type: ignore
+except Exception as e:
+    logger.warning(f"No se pudo importar analizador de notebooks: {e}")
+    analyze_notebooks = None
+
 def main():
     """
     Función principal que orquesta todo el flujo del proyecto.
@@ -236,20 +303,29 @@ def main():
     print("=" * 60)
     print()
     
+    # 0. Analizar notebooks
+    if analyze_notebooks is not None:
+        print("🔎 Paso 0: Analizando notebooks (ejecución segura)...")
+        try:
+            nb_results = analyze_notebooks(folder=".", execute_safe=True)
+            total_exported = sum(len(r['exported']) for r in nb_results)
+            if total_exported > 0:
+                print(f"   ✓ Se exportaron {total_exported} datasets desde notebooks")
+        except Exception as e:
+            logger.warning(f"Error al analizar notebooks: {e}")
+        print()
+    
     # 1. Cargar configuración
     print("📋 Paso 1: Cargando configuración...")
     config = load_config()
     location = config.get("location", {})
-    data_config = config.get("data", {})
     
     latitude = location.get("latitude", 6.244)
     longitude = location.get("longitude", -75.581)
     timezone = location.get("timezone", "America/Bogota")
-    output_dir = data_config.get("output_directory", "data")
-    filename = data_config.get("default_filename", "weather_data.csv")
+    city = location.get("city", "Medellín")
     
-    print(f"   ✓ Ubicación: Lat {latitude}, Lon {longitude}")
-    print(f"   ✓ Zona horaria: {timezone}")
+    print(f"   ✓ Ubicación: {city} (Lat {latitude}, Lon {longitude})")
     print()
     
     # 2. Validar coordenadas
@@ -262,64 +338,238 @@ def main():
         sys.exit(1)
     print()
     
-    # 3. Consumir datos de la API
-    print("🌐 Paso 3: Consumiendo datos desde Open-Meteo API...")
-    try:
-        api_response = get_weather_data(
-            latitude=latitude,
-            longitude=longitude,
-            timezone=timezone
-        )
-        print("   ✓ Datos obtenidos exitosamente")
-        print(f"   ✓ Registros recibidos: {len(api_response.get('hourly', {}).get('time', []))}")
-    except Exception as e:
-        print(f"   ❌ Error al obtener datos: {e}")
-        sys.exit(1)
+    # 3. NUEVO: Extraer datos de cada API por separado
+    print("🌐 Paso 3: Extrayendo datos de cada API (por separado)...")
+    extractor = APIDataExtractor(Path("data/raw_api_data"))
+    
+    extraction_results = extractor.extract_all(
+        lat=latitude,
+        lon=longitude,
+        city=city,
+        owm_api_key=os.getenv("OPENWEATHER_API_KEY")
+    )
+    
+    # Mostrar resumen de extracción
+    print("\n📋 Resumen de extracción por API:")
+    for api_name, result in extraction_results.items():
+        meta = result["metadata"]
+        if meta.get("status") == "success":
+            records = meta.get("records", 0)
+            print(f"   ✓ {api_name}: {records} registros")
+        elif meta.get("status") == "empty":
+            print(f"   ⚠️  {api_name}: DataFrame vacío")
+        elif meta.get("status") == "not_found":
+            print(f"   ℹ️  {api_name}: No disponible")
+        else:
+            print(f"   ❌ {api_name}: {meta.get('error', 'Error desconocido')}")
     print()
     
-    # 4. Procesar y transformar datos
-    print("🔄 Paso 4: Procesando y transformando datos...")
-    try:
-        df = process_weather_data(api_response)
-        print("   ✓ Datos procesados exitosamente")
-        print(f"   ✓ Columnas: {', '.join(df.columns)}")
-        print(f"   ✓ Registros procesados: {len(df)}")
-        print(f"   ✓ Rango de fechas: {df.index.min()} a {df.index.max()}")
-    except Exception as e:
-        print(f"   ❌ Error al procesar datos: {e}")
+    # 4. Combinar y normalizar datos
+    print("🔄 Paso 4: Combinando datos de múltiples APIs...")
+    
+    sources_data = {}
+    for api_name, result in extraction_results.items():
+        df = result["dataframe"]
+        if not df.empty:
+            sources_data[api_name] = df
+    
+    if not sources_data:
+        print("   ❌ No se obtuvieron datos de ninguna fuente")
         sys.exit(1)
+    
+    try:
+        df_combined = DataNormalizer.combine_sources(sources_data)
+        print(f"   ✓ Datos combinados: {len(df_combined)} registros únicos")
+    except Exception as e:
+        print(f"   ❌ Error al combinar fuentes: {e}")
+        logger.error(f"Error combinando fuentes: {e}", exc_info=True)
+        df_combined = list(sources_data.values())[0]
+    
     print()
     
-    # 5. Guardar datos en CSV
-    print("💾 Paso 5: Guardando datos en CSV...")
+    # 5. Validar y reparar calidad de datos
+    print("📊 Paso 5: Validando y reparando calidad de datos...")
+    
+    df_repaired, repair_actions = DataDiagnostics.validate_and_repair(df_combined)
+    if repair_actions:
+        print("   🔧 Acciones de reparación:")
+        for action in repair_actions:
+            print(f"      • {action}")
+    
+    df_combined = df_repaired
+    
+    # Validar esquema
+    is_valid, errors = DataNormalizer.validate_dataframe(df_combined)
+    if is_valid:
+        print("   ✓ Validación de esquema exitosa")
+    else:
+        print(f"   ⚠️  Errores de esquema:")
+        for error in errors:
+            print(f"      • {error}")
+    
+    # Generar reporte de calidad
     try:
-        output_path = Path(output_dir) / filename
-        saved_path = save_to_csv(df, str(output_path))
-        print(f"   ✓ Datos guardados en: {saved_path}")
-        print(f"   ✓ Tamaño del archivo: {Path(saved_path).stat().st_size / 1024:.2f} KB")
+        quality_report = DataQualityReport.generate(df_combined, "combined")
+        summary = quality_report.get("summary", {})
+        missing_pct = summary.get("missing_data_percent", 0)
+        overall_quality = summary.get("overall_quality", "Unknown")
+        
+        print(f"   ✓ Calidad: {overall_quality} (Completitud: {missing_pct:.2f}%)")
+        
+        # Guardar reporte
+        report_file = Path("data/data_quality_report.json")
+        report_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(report_file, 'w') as f:
+            json.dump(quality_report, f, indent=2, default=str)
+        print(f"   ✓ Reporte guardado en: {report_file}")
     except Exception as e:
-        print(f"   ❌ Error al guardar datos: {e}")
-        sys.exit(1)
+        print(f"   ❌ Error generando reporte: {e}")
+        logger.error(f"Error en reporte de calidad: {e}", exc_info=True)
+    
     print()
     
-    # 6. Resumen final
+    # 6. Guardar datos normalizados
+    print("💾 Paso 6: Guardando datos normalizados...")
+    try:
+        output_path = Path("data/weather_data_normalized.csv")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        df_combined.to_csv(output_path, index=False)
+        print(f"   ✓ Datos guardados en: {output_path}")
+        print(f"   ✓ Registros: {len(df_combined)}")
+        print(f"   ✓ Columnas: {len(df_combined.columns)}")
+    except Exception as e:
+        print(f"   ❌ Error al guardar: {e}")
+        logger.error(f"Error guardando datos: {e}", exc_info=True)
+    
+    print()
+    
+    # 7. Resumen final
     print("=" * 60)
     print("✅ Proceso completado exitosamente!")
     print("=" * 60)
     print()
-    print("📊 Resumen de los datos:")
-    print(f"   • Temperatura promedio: {df['temperatura_c'].mean():.2f} °C")
-    print(f"   • Humedad promedio: {df['humedad_porcentaje'].mean():.2f} %")
-    print(f"   • Precipitación total: {df['precipitacion_mm'].sum():.2f} mm")
-    if 'velocidad_viento_kmh' in df.columns:
-        print(f"   • Velocidad del viento promedio: {df['velocidad_viento_kmh'].mean():.2f} km/h")
-    else:
-        print("   ❌ La columna 'velocidad_viento_kmh' no se encuentra en el DataFrame.")
+    print("📊 Archivos generados:")
+    print("   Datos por API (raw):")
+    for api in ["open-meteo", "openweathermap", "siata"]:
+        api_dir = Path(f"data/raw_api_data/{api}")
+        if api_dir.exists():
+            csv_files = list(api_dir.glob("*.csv"))
+            if csv_files:
+                print(f"      • {api}: {len(csv_files)} archivos CSV")
+    
+    print("\n   Datos consolidados:")
+    print("      • data/weather_data_normalized.csv")
+    print("      • data/raw_api_data/reports/ (reportes por API)")
     print()
-    print("🚀 Para ver el dashboard, ejecuta:")
+    print("🚀 Para ejecutar las pruebas:")
+    print("   pytest tests/test_api_data_sources.py -v")
+    print()
+    print("🚀 Para ver el dashboard:")
     print("   streamlit run dashboard/app.py")
     print()
 
+
+# Nuevo endpoint para MeteoBlue (actual / forecast)
+@app.get("/api/v1/weather/meteoblue", tags=["weather"])
+async def get_meteoblue_weather(
+    lat: float,
+    lon: float,
+    mode: str = "current",
+    days: int = 7
+):
+    """
+    Endpoint que expone MeteoBlue:
+    - mode=current -> resumen actual
+    - mode=forecast -> resumen diario para `days`
+    """
+    try:
+        location = {"lat": lat, "lon": lon, "id": f"{lat},{lon}"}
+        if mode == "forecast":
+            resp = await meteoblue_client.get_forecast(location, days=days)
+            return {"source": "meteoblue", "mode": "forecast", "data": resp}
+        resp = await meteoblue_client.get_current(location)
+        return {"source": "meteoblue", "mode": "current", "data": resp}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"MeteoBlue error: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener datos de MeteoBlue")
+
+
+@app.get("/api/v1/weather/openweathermap", tags=["weather"])
+async def fetch_openweathermap(city: str = Query(..., description="Ciudad (p.ej. Medellín)")):
+    """
+    Obtiene datos actuales de OpenWeatherMap, guarda CSV por API y retorna JSON normalizado.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        # OpenWeatherMap client es sync; ejecutarlo en executor
+        raw = await loop.run_in_executor(None, owm_client.get_weather_data, city)
+        # guardar CSV con un solo registro
+        rec = {
+            "timestamp": raw.get("timestamp"),
+            "temperature": raw.get("temperature"),
+            "humidity": raw.get("humidity"),
+            "wind_speed": raw.get("wind_speed"),
+            "location": raw.get("location")
+        }
+        _save_api_csv(DATA_DIR / "openweathermap.csv", [rec])
+        return {"source": "openweathermap", "data": raw}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/weather/meteoblue/save", tags=["weather"])
+async def fetch_and_save_meteoblue(lat: float = Query(...), lon: float = Query(...), mode: str = "current", days: int = 7):
+    """
+    Obtiene datos MeteoBlue (current o forecast), guarda CSV específico de la API.
+    """
+    location = {"lat": lat, "lon": lon, "id": f"{lat},{lon}"}
+    try:
+        if mode == "forecast":
+            resp = await meteoblue_client.get_forecast(location, days=days)
+            # normalizar days -> registros (date -> timestamp noon)
+            records = []
+            for d in resp.get("days", []):
+                date = d.get("date")
+                ts = f"{date}T12:00:00"
+                records.append({"timestamp": ts, "temp_max": d.get("temp_max"), "temp_min": d.get("temp_min"), "precipitation": d.get("precipitation")})
+            _save_api_csv(DATA_DIR / "meteoblue.csv", records)
+            return {"source": "meteoblue", "mode": "forecast", "data": resp}
+        resp = await meteoblue_client.get_current(location)
+        rec = {"timestamp": resp.get("timestamp"), "temperature": resp.get("temperature"), "humidity": resp.get("humidity"), "location": resp.get("location")}
+        _save_api_csv(DATA_DIR / "meteoblue.csv", [rec])
+        return {"source": "meteoblue", "mode": "current", "data": resp}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/weather/radar", tags=["weather"])
+async def fetch_radar_ideam(lat: float = Query(...), lon: float = Query(...)):
+    """
+    Endpoint placeholder para RADAR IDEAM. Si existe módulo data_sources.radar_ideam con fetch_weather
+    lo usará y guardará CSV; si no, devuelve 501.
+    """
+    try:
+        try:
+            from data_sources.radar_ideam import fetch_weather as radar_fetch  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=501, detail="RADAR IDEAM no implementado en el proyecto.")
+        data = radar_fetch(lat, lon)
+        # intentar extraer registros y guardar
+        records = []
+        if isinstance(data, dict) and "data" in data:
+            payload = data["data"]
+            # si payload es lista de hourly records
+            if isinstance(payload, list):
+                for rec in payload:
+                    ts = rec.get("timestamp") or rec.get("time") or rec.get("date")
+                    records.append({"timestamp": ts, **{k: v for k, v in rec.items() if k != "timestamp"}})
+        _save_api_csv(DATA_DIR / "radar_ideam.csv", records)
+        return {"source": "radar_ideam", "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 if __name__ == "__main__":
     import uvicorn
@@ -335,3 +585,9 @@ if __name__ == "__main__":
     else:
         # Ejecutar script original
         main()
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Reemplaza caracteres no válidos para nombres de archivos en Windows.
+    """
+    return filename.replace(":", "_").replace("\\", "_").replace("/", "_")

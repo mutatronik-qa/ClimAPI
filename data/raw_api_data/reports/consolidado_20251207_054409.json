@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-12-07T05:44:09.571278",
+  "location": {
+    "latitude": 6.244,
+    "longitude": -75.581,
+    "city": "Medell\u00edn"
+  },
+  "apis": {
+    "open-meteo": {
+      "status": "error",
+      "error": "[Errno 22] Invalid argument: 'data\\\\raw_api_data\\\\open-meteo\\\\raw_2025-12-07T05:44:09.065651.json'"
+    },
+    "openweathermap": {
+      "status": "error",
+      "error": "401 Client Error: Unauthorized for url: http://api.openweathermap.org/data/2.5/weather?q=Medell%C3%ADn&appid=demo&units=metric&lang=es"
+    },
+    "siata": {
+      "status": "not_found"
+    }
+  }
+}

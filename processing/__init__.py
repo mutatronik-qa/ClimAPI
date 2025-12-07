@@ -12,3 +12,5 @@ __all__ = [
     'save_to_csv',
     'load_from_csv'
 ]
+
+# Paquete processing -- permite imports como `from processing import ...`

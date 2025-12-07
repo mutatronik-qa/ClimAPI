@@ -5,16 +5,21 @@ Este módulo crea un dashboard usando Streamlit para visualizar
 temperatura, humedad, precipitación y velocidad del viento.
 """
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from pathlib import Path
 import sys
+import glob
 
-# Agregar el directorio raíz al path para importar módulos
-sys.path.append(str(Path(__file__).parent.parent))
+# Añadir la raíz del proyecto al PYTHONPATH para poder importar módulos sibling
+PROJECT_ROOT = Path(__file__).resolve().parents[1]  # e:\GIT\ClimAPI
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+import requests
+from processing.data_processor import DataProcessor
 from processing.storage import load_from_csv
 
 
@@ -38,6 +43,54 @@ def load_data(filepath: str = "data/weather_data.csv") -> pd.DataFrame:
         st.error(f"❌ Error al cargar los datos: {e}")
         st.stop()
 
+def _load_api_csv_as_standard(path: str) -> pd.DataFrame:
+    """
+    Carga un CSV de una API y lo normaliza al esquema usado en el dashboard:
+    índice datetime UTC y columnas: temperatura_c, humedad_porcentaje, precipitacion_mm, velocidad_viento_kmh
+    """
+    try:
+        df_api = load_from_csv(path)
+    except FileNotFoundError:
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+    if df_api.empty:
+        return df_api
+
+    # asegurar columna timestamp
+    if "timestamp" in df_api.columns:
+        df_api["timestamp"] = pd.to_datetime(df_api["timestamp"], utc=True)
+        df_api = df_api.set_index("timestamp")
+    elif df_api.index.dtype == object:
+        try:
+            df_api.index = pd.to_datetime(df_api.index, utc=True)
+        except Exception:
+            pass
+
+    # mapeos comunes
+    col_map = {}
+    if "temperature" in df_api.columns:
+        col_map["temperature"] = "temperatura_c"
+    if "temp" in df_api.columns:
+        col_map["temp"] = "temperatura_c"
+    if "humidity" in df_api.columns:
+        col_map["humidity"] = "humedad_porcentaje"
+    if "wind_speed" in df_api.columns:
+        col_map["wind_speed"] = "velocidad_viento_kmh"
+    if "precipitation" in df_api.columns:
+        col_map["precipitation"] = "precipitacion_mm"
+    if "precip" in df_api.columns:
+        col_map["precip"] = "precipitacion_mm"
+
+    if col_map:
+        df_api = df_api.rename(columns=col_map)
+
+    # mantener sólo las columnas que interesan si existen
+    keep = [c for c in ["temperatura_c", "humedad_porcentaje", "precipitacion_mm", "velocidad_viento_kmh"] if c in df_api.columns]
+    if not keep:
+        return pd.DataFrame()
+    return df_api[keep]
 
 def create_temperature_chart(df: pd.DataFrame, date_range: tuple) -> go.Figure:
     """
@@ -155,6 +208,72 @@ def create_wind_speed_chart(df: pd.DataFrame, date_range: tuple) -> go.Figure:
     return fig
 
 
+def fetch_meteoblue_points(lat: float = 6.244, lon: float = -75.581, mode: str = "current"):
+    """
+    Llamada al backend FastAPI para obtener datos MeteoBlue.
+    Devuelve lista de puntos normalizados (timestamp, temperature).
+    """
+    url = f"http://localhost:8000/api/v1/weather/meteoblue"
+    params = {"lat": lat, "lon": lon, "mode": mode}
+    try:
+        r = requests.get(url, params=params, timeout=8)
+        r.raise_for_status()
+        payload = r.json().get("data", {})
+        points = []
+        if payload:
+            if mode == "current":
+                # payload es dict con timestamp + temperature
+                ts = payload.get("timestamp") or payload.get("time")
+                temp = payload.get("temperature")
+                if ts and temp is not None:
+                    points.append({"timestamp": ts, "temperature": temp, "location": payload.get("location")})
+            else:
+                # forecast: buscar days -> lista de dicts {date, temp_min, temp_max}
+                days = payload.get("days") or []
+                for d in days:
+                    # usar temp_max como punto representativo a mediodía
+                    date = d.get("date")
+                    temp = d.get("temp_max") or d.get("temp_min")
+                    if date and temp is not None:
+                        # convertir date a ISO con tiempo 12:00 para agregación horaria
+                        ts = f"{date}T12:00:00"
+                        points.append({"timestamp": ts, "temperature": temp, "location": payload.get("location_id")})
+        return points
+    except Exception:
+        return []
+
+
+def load_data_separated(realtime_pattern: str = "data/realtime_*.csv", historical_pattern: str = "data/historical_*.csv"):
+    """
+    Carga datasets exportados por el analizador de notebooks.
+    Devuelve dict con keys 'realtime', 'historical'
+    """
+    result = {"realtime": pd.DataFrame(), "historical": pd.DataFrame()}
+    realtime_files = glob.glob(realtime_pattern)
+    historical_files = glob.glob(historical_pattern)
+
+    if realtime_files:
+        dfs = []
+        for f in realtime_files:
+            try:
+                dfs.append(pd.read_csv(f))
+            except Exception as e:
+                st.warning(f"Error al cargar {f}: {e}")
+        if dfs:
+            result["realtime"] = pd.concat(dfs, ignore_index=True)
+    
+    if historical_files:
+        dfs = []
+        for f in historical_files:
+            try:
+                dfs.append(pd.read_csv(f))
+            except Exception as e:
+                st.warning(f"Error al cargar {f}: {e}")
+        if dfs:
+            result["historical"] = pd.concat(dfs, ignore_index=True)
+    
+    return result
+
 def main():
     """
     Función principal que configura y ejecuta el dashboard.
@@ -168,22 +287,81 @@ def main():
     )
     
     # Título principal
-    st.title("🌤️ Dashboard Meteorológico - Open-Meteo")
+    st.title("🌤️ Dashboard Meteorológico - ClimAPI")
     st.markdown("---")
     
     # Sidebar para configuración
     st.sidebar.header("⚙️ Configuración")
     
-    # Selector de archivo de datos
+    # Cargar datos base
     data_file = st.sidebar.text_input(
         "📁 Archivo de datos",
         value="data/weather_data.csv",
         help="Ruta al archivo CSV con los datos meteorológicos"
     )
+
+    # Opción: incluir datos de notebooks (realtime vs historical)
+    st.sidebar.subheader("📊 Datasets desde Notebooks")
+    datasets = load_data_separated()
     
-    # Cargar datos
-    df = load_data(data_file)
+    source_choice = st.sidebar.radio(
+        "Fuente de datos:",
+        ["Open-Meteo Principal", "Realtime (Notebooks)", "Historical (Notebooks)", "Combinado"]
+    )
     
+    # Cargar datos según selección
+    if source_choice == "Open-Meteo Principal":
+        try:
+            df = load_from_csv(data_file)
+            st.sidebar.success("✓ Datos Open-Meteo cargados")
+        except Exception as e:
+            st.sidebar.error(f"Error al cargar {data_file}: {e}")
+            st.stop()
+    elif source_choice == "Realtime (Notebooks)":
+        df = datasets["realtime"]
+        if df.empty:
+            st.sidebar.warning("No hay datos realtime disponibles")
+            st.stop()
+        st.sidebar.success(f"✓ {len(df)} registros realtime cargados")
+    elif source_choice == "Historical (Notebooks)":
+        df = datasets["historical"]
+        if df.empty:
+            st.sidebar.warning("No hay datos historical disponibles")
+            st.stop()
+        st.sidebar.success(f"✓ {len(df)} registros historical cargados")
+    else:  # Combinado
+        df_main = load_from_csv(data_file)
+        df_combined = pd.concat([
+            df_main,
+            datasets["realtime"],
+            datasets["historical"]
+        ], ignore_index=True)
+        df = df_combined if not df_combined.empty else df_main
+        st.sidebar.success(f"✓ Combinación de {len(df)} registros cargada")
+
+    # Opciones adicionales de APIs
+    st.sidebar.subheader("🔗 APIs Adicionales")
+    include_mb = st.sidebar.checkbox("🔗 Incluir MeteoBlue (backend)", value=False)
+    include_owm = st.sidebar.checkbox("🔗 Incluir OpenWeatherMap (CSV)", value=False)
+    include_radar = st.sidebar.checkbox("🔗 Incluir RADAR IDEAM (CSV)", value=False)
+
+    # Cargar CSVs adicionales si existen
+    if include_owm:
+        df_owm = _load_api_csv_as_standard("data/openweathermap.csv")
+        if not df_owm.empty:
+            df = pd.concat([df, df_owm], axis=0, ignore_index=False).sort_index()
+            st.sidebar.success("✓ OpenWeatherMap agregado")
+    
+    if include_radar:
+        df_radar = _load_api_csv_as_standard("data/radar_ideam.csv")
+        if not df_radar.empty:
+            df = pd.concat([df, df_radar], axis=0, ignore_index=False).sort_index()
+            st.sidebar.success("✓ RADAR IDEAM agregado")
+
+    if df.empty:
+        st.error("❌ No hay datos disponibles. Ejecuta main.py para obtener datos.")
+        st.stop()
+
     # Información general en el sidebar
     st.sidebar.markdown("### 📊 Información General")
     st.sidebar.metric("Total de registros", len(df))
@@ -264,6 +442,8 @@ def main():
         file_name=f"weather_data_{start_date}_{end_date}.csv",
         mime="text/csv"
     )
+    st.sidebar.markdown("---")
+    st.sidebar.info("📖 Dashboard Meteorológico v1.0")
 
 
 if __name__ == "__main__":
