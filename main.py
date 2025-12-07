@@ -311,7 +311,10 @@ def main():
     print(f"   • Temperatura promedio: {df['temperatura_c'].mean():.2f} °C")
     print(f"   • Humedad promedio: {df['humedad_porcentaje'].mean():.2f} %")
     print(f"   • Precipitación total: {df['precipitacion_mm'].sum():.2f} mm")
-    print(f"   • Velocidad del viento promedio: {df['velocidad_viento_kmh'].mean():.2f} km/h")
+    if 'velocidad_viento_kmh' in df.columns:
+        print(f"   • Velocidad del viento promedio: {df['velocidad_viento_kmh'].mean():.2f} km/h")
+    else:
+        print("   ❌ La columna 'velocidad_viento_kmh' no se encuentra en el DataFrame.")
     print()
     print("🚀 Para ver el dashboard, ejecuta:")
     print("   streamlit run dashboard/app.py")
