@@ -36,3 +36,4 @@ passlib
 
 # CORS
 python-multipart
+python-dotenv
