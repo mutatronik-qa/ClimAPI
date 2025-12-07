@@ -1,169 +1,187 @@
 """
-Módulo para almacenamiento en caché y persistencia de datos
+Módulo para guardar y cargar datos meteorológicos.
+
+Este módulo proporciona funciones para persistir los DataFrames
+en formato CSV y cargarlos posteriormente.
 """
 
 import pandas as pd
-import json
-import logging
-import os
 from pathlib import Path
+from typing import Optional, Any, Dict
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+import diskcache as dc
 import hashlib
+import json
+from functools import wraps
+
+
+def save_to_csv(
+    df: pd.DataFrame,
+    filepath: str,
+    append: bool = False,
+    include_timestamp: bool = False
+) -> str:
+    """
+    Guarda un DataFrame en un archivo CSV.
+    
+    Args:
+        df: DataFrame a guardar
+        filepath: Ruta del archivo CSV (puede incluir o no la extensión .csv)
+        append: Si es True, agrega los datos al archivo existente. Si es False, sobrescribe
+        include_timestamp: Si es True, agrega un timestamp al nombre del archivo
+    
+    Returns:
+        str: Ruta completa del archivo guardado
+    """
+    # Asegurar que el archivo tenga extensión .csv
+    if not filepath.endswith('.csv'):
+        filepath += '.csv'
+    
+    # Agregar timestamp si se solicita
+    if include_timestamp:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path_obj = Path(filepath)
+        filepath = f"{path_obj.stem}_{timestamp}{path_obj.suffix}"
+    
+    # Crear directorio si no existe
+    path_obj = Path(filepath)
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Guardar el DataFrame
+    if append and path_obj.exists():
+        # Modo append: leer el archivo existente, concatenar y guardar
+        df_existing = pd.read_csv(filepath, index_col=0, parse_dates=True)
+        df_combined = pd.concat([df_existing, df])
+        # Eliminar duplicados basados en el índice
+        df_combined = df_combined[~df_combined.index.duplicated(keep='last')]
+        df_combined = df_combined.sort_index()
+        df_combined.to_csv(filepath)
+    else:
+        # Modo write: guardar directamente
+        df.to_csv(filepath)
+    
+    return filepath
+
+
+def load_from_csv(filepath: str) -> pd.DataFrame:
+    """
+    Carga un DataFrame desde un archivo CSV.
+    
+    Args:
+        filepath: Ruta del archivo CSV a cargar
+    
+    Returns:
+        pd.DataFrame: DataFrame cargado con el índice 'time' como datetime
+    """
+    if not filepath.endswith('.csv'):
+        filepath += '.csv'
+    
+    # Verificar que el archivo existe
+    path_obj = Path(filepath)
+    if not path_obj.exists():
+        raise FileNotFoundError(f"El archivo {filepath} no existe")
+    
+    # Cargar el DataFrame
+    df = pd.read_csv(filepath, index_col=0, parse_dates=True)
+    
+    return df
+
+
+import logging
 
 logger = logging.getLogger(__name__)
 
 class CacheManager:
-    """Gestor de caché en memoria y disco"""
-    
-    def __init__(self, ttl_minutes: int = 15, cache_dir: str = "cache"):
-        self.ttl_minutes = ttl_minutes
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
-        self.memory_cache: Dict[str, tuple] = {}
-        
-        logger.info(f"📦 CacheManager inicializado (TTL: {ttl_minutes} min)")
-    
-    def _get_cache_key(self, latitude: float, longitude: float, timezone: str) -> str:
-        """Genera clave de caché única"""
-        key_str = f"{latitude}_{longitude}_{timezone}"
-        return hashlib.md5(key_str.encode()).hexdigest()
-    
-    def get_processed_data(
-        self, 
-        latitude: float, 
-        longitude: float, 
-        timezone: str
-    ) -> Optional[pd.DataFrame]:
-        """
-        Obtiene datos del caché si están frescos
-        
-        Args:
-            latitude: Latitud
-            longitude: Longitud
-            timezone: Zona horaria
-        
-        Returns:
-            DataFrame si existe y es fresco, None si no
-        """
-        
-        cache_key = self._get_cache_key(latitude, longitude, timezone)
-        
-        # Verificar caché en memoria
-        if cache_key in self.memory_cache:
-            df, timestamp = self.memory_cache[cache_key]
-            age = datetime.now() - timestamp
-            
-            if age < timedelta(minutes=self.ttl_minutes):
-                logger.info(f"📦 Datos en caché válidos ({age.seconds}s de antigüedad)")
-                return df
+    def __init__(self, cache_dir="cache", ttl_minutes=15):
+        self.cache = dc.Cache(cache_dir)
+        self.ttl = timedelta(minutes=ttl_minutes)
+        logger.info(f"CacheManager inicializado. Directorio: {cache_dir}, TTL: {ttl_minutes} minutos.")
+
+    def _generate_key(self, prefix, *args, **kwargs):
+        # Genera una clave única basada en los argumentos
+        key_components = [prefix] + [str(arg) for arg in args] + [f"{k}={v}" for k, v in sorted(kwargs.items())]
+        return hashlib.md5("_".join(key_components).encode('utf-8')).hexdigest()
+
+    def get(self, key):
+        data = self.cache.get(key)
+        if data:
+            timestamp, value = data
+            if datetime.now() - timestamp < self.ttl:
+                logger.debug(f"Cache hit para la clave: {key}")
+                return value
             else:
-                logger.info(f"⏰ Caché expirado ({age.seconds}s)")
-                del self.memory_cache[cache_key]
-        
-        # Verificar caché en disco
-        cache_file = self.cache_dir / f"{cache_key}.parquet"
-        if cache_file.exists():
-            try:
-                df = pd.read_parquet(cache_file)
-                file_age = datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)
-                
-                if file_age < timedelta(minutes=self.ttl_minutes):
-                    logger.info(f"💾 Datos recuperados de disco ({file_age.seconds}s de antigüedad)")
-                    self.memory_cache[cache_key] = (df, datetime.now())
-                    return df
-                else:
-                    logger.info(f"⏰ Caché en disco expirado")
-                    cache_file.unlink()
-            except Exception as e:
-                logger.error(f"❌ Error leyendo caché: {e}")
-        
+                logger.debug(f"Cache expirada para la clave: {key}")
+                self.cache.delete(key)
+        logger.debug(f"Cache miss para la clave: {key}")
         return None
-    
-    def set_processed_data(
-        self,
-        latitude: float,
-        longitude: float,
-        timezone: str,
-        df: pd.DataFrame
-    ) -> None:
-        """
-        Guarda datos en caché
-        
-        Args:
-            latitude: Latitud
-            longitude: Longitud
-            timezone: Zona horaria
-            df: DataFrame a guardar
-        """
-        
-        cache_key = self._get_cache_key(latitude, longitude, timezone)
-        
-        # Guardar en memoria
-        self.memory_cache[cache_key] = (df, datetime.now())
-        
-        # Guardar en disco
-        try:
-            cache_file = self.cache_dir / f"{cache_key}.parquet"
-            df.to_parquet(cache_file)
-            logger.info(f"💾 Datos guardados en caché")
-        except Exception as e:
-            logger.error(f"❌ Error guardando caché: {e}")
-    
-    def clear(self) -> None:
-        """Limpia todo el caché"""
-        self.memory_cache.clear()
-        
-        for file in self.cache_dir.glob("*.parquet"):
-            file.unlink()
-        
-        logger.info("🗑️ Caché limpiado")
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Obtiene estadísticas del caché"""
-        cache_files = list(self.cache_dir.glob("*.parquet"))
-        
-        return {
-            "cache_entries": len(self.memory_cache),
-            "disk_files": len(cache_files),
-            "cache_dir": str(self.cache_dir),
-            "ttl_minutes": self.ttl_minutes
+
+    def set(self, key, value):
+        self.cache.set(key, (datetime.now(), value))
+        logger.debug(f"Datos guardados en caché para la clave: {key}")
+
+    def get_weather_data(self, latitude, longitude, timezone):
+        key = self._generate_key("weather_raw", latitude, longitude, timezone)
+        cached_data = self.get(key)
+        if cached_data:
+            return json.loads(cached_data)
+        return None
+
+    def set_weather_data(self, latitude, longitude, timezone, data):
+        key = self._generate_key("weather_raw", latitude, longitude, timezone)
+        self.set(key, json.dumps(data))
+
+    def get_processed_data(self, latitude, longitude, timezone):
+        key = self._generate_key("weather_processed", latitude, longitude, timezone)
+        cached_data = self.get(key)
+        if cached_data is not None:
+            try:
+                # Asumiendo que el DataFrame se guarda como JSON o similar
+                # y necesita ser reconstruido. Para simplificar, si se guarda
+                # como string JSON, se convierte de nuevo a DataFrame.
+                # Esto puede requerir un formato específico de serialización/deserialización.
+                # Por ahora, un ejemplo simple si se guarda como dict y se convierte a DF.
+                return pd.read_json(cached_data, orient='split')
+            except Exception as e:
+                logger.error(f"Error al deserializar DataFrame de caché: {e}")
+                return None
+        return None
+
+    def set_processed_data(self, latitude, longitude, timezone, dataframe):
+        key = self._generate_key("weather_processed", latitude, longitude, timezone)
+        # Guardar DataFrame como JSON string para compatibilidad
+        self.set(key, dataframe.to_json(orient='split'))
+
+    def clear(self):
+        self.cache.clear()
+        logger.info("Caché limpiada.")
+        return {"message": "Cache cleared", "timestamp": datetime.now().isoformat()}
+
+    def get_stats(self):
+        stats = {
+            "entries": len(self.cache),
+            "size": self.cache.volume(), # Retorna el tamaño en bytes
+            "path": self.cache.directory,
+            "ttl_minutes": self.ttl.total_seconds() / 60
         }
+        logger.info(f"Estadísticas de caché: {stats}")
+        return stats
 
-def save_to_csv(df: pd.DataFrame, filepath: str) -> None:
-    """
-    Guarda DataFrame en CSV
-    
-    Args:
-        df: DataFrame a guardar
-        filepath: Ruta del archivo
-    """
-    
-    try:
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(filepath)
-        logger.info(f"✅ Archivo guardado: {filepath}")
-    except Exception as e:
-        logger.error(f"❌ Error guardando CSV: {e}")
-        raise
+def cache_weather_data(func):
+    def wrapper(*args, **kwargs):
+        # Asumiendo que el primer argumento es 'self' si es un método de clase,
+        # o que los argumentos relevantes para la clave están en args/kwargs.
+        # Para este ejemplo, simplificamos asumiendo que los args son lat, lon, tz.
+        latitude = kwargs.get('latitude') or args[0]
+        longitude = kwargs.get('longitude') or args[1]
+        timezone = kwargs.get('timezone') or args[2] if len(args) > 2 else "America/Bogota"
 
-def save_to_json(data: Dict[str, Any], filepath: str) -> None:
-    """
-    Guarda datos en JSON
-    
-    Args:
-        data: Dict a guardar
-        filepath: Ruta del archivo
-    """
-    
-    try:
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        
-        logger.info(f"✅ Archivo guardado: {filepath}")
-    except Exception as e:
-        logger.error(f"❌ Error guardando JSON: {e}")
-        raise
+        cache_manager = CacheManager() # Esto debería ser una instancia global o pasada
 
+        cached_data = cache_manager.get_weather_data(latitude, longitude, timezone)
+        if cached_data:
+            return cached_data
+
+        result = func(*args, **kwargs)
+        cache_manager.set_weather_data(latitude, longitude, timezone, result)
+        return result
+    return wrapper
