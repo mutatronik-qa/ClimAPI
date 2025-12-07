@@ -1,22 +1,38 @@
 # Backend dependencies
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-python-multipart>=0.0.6
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+python-multipart
 
 # Data processing
 pandas
 requests
 bs4
+numpy
 
 # Caching
-diskcache>=5.6.0
+diskcache
 
 # Logging
-python-json-logger>=2.0.0
+python-json-logger
 
 # Original dashboard (optional)
-streamlit>=1.28.0
-plotly>=5.17.0
+streamlit
+plotly
 
+# Peticiones HTTP
+httpx
+
+# Desarrollo
+pytest
+pytest-asyncio
+black
+isort
+mypy
+# Seguridad
+python-jose
+passlib
+
+# CORS
+python-multipart
