@@ -3,7 +3,7 @@
 
 import pytest
 from unittest.mock import Mock, patch
-from src.data_sources.radar_ideam import RadarIDEAMClient
+from data_sources.radar_ideam import RadarIDEAMClient
 from datetime import datetime, timedelta
 
 

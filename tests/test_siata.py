@@ -1,6 +1,6 @@
 # tests/test_siata.py
 import pytest
-from src.data_sources.siata import SIATAClient
+from data_sources.siata import SIATAClient
 
 def test_siata_client_initialization():
     config = {"api_url": "https://www.siata.gov.co"}
@@ -26,4 +26,4 @@ def test_radar_list_scans():
     assert isinstance(scans, list)
 
 # Ejecutar tests
-pytest tests/ -v --cov=src --cov-report=html
+# pytest tests/ -v --cov=src --cov-report=html

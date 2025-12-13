@@ -11,7 +11,7 @@ Covers:
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from src.data_sources.siata import SIATAClient
+from data_sources.siata import SIATAClient
 from datetime import datetime
 
 
@@ -41,7 +41,7 @@ class TestSIATAClientInitialization:
 class TestSIATAClientAPI:
     """Tests de métodos API del cliente."""
     
-    @patch('src.data_sources.siata.requests.Session.get')
+    @patch('data_sources.siata.requests.Session.get')
     def test_fetch_from_api_success(self, mock_get):
         """Debe obtener datos exitosamente desde API."""
         # Mock respuesta exitosa
@@ -61,7 +61,7 @@ class TestSIATAClientAPI:
         assert "temperature" in result
         assert result["source"] == "siata"
     
-    @patch('src.data_sources.siata.requests.Session.get')
+    @patch('data_sources.siata.requests.Session.get')
     def test_fetch_from_api_failure(self, mock_get):
         """Debe retornar None si API no está disponible."""
         mock_get.return_value.status_code = 404
@@ -71,8 +71,8 @@ class TestSIATAClientAPI:
         
         assert result is None
     
-    @patch('src.data_sources.siata.BeautifulSoup')
-    @patch('src.data_sources.siata.requests.Session.get')
+    @patch('data_sources.siata.BeautifulSoup')
+    @patch('data_sources.siata.requests.Session.get')
     def test_scrape_weather_data_success(self, mock_get, mock_soup):
         """Debe hacer scraping exitosamente."""
         # Mock HTML response
@@ -95,7 +95,7 @@ class TestSIATAClientAPI:
 class TestSIATAClientWeatherCurrent:
     """Tests del método get_weather_current."""
     
-    @patch('src.data_sources.siata.SIATAClient._fetch_from_api')
+    @patch('data_sources.siata.SIATAClient._fetch_from_api')
     def test_get_weather_current_with_api(self, mock_api):
         """Debe usar API si está disponible."""
         mock_api.return_value = {
@@ -111,8 +111,8 @@ class TestSIATAClientWeatherCurrent:
         assert result["temperature"] == 22.5
         assert result["source"] == "siata"
     
-    @patch('src.data_sources.siata.SIATAClient._fetch_from_api')
-    @patch('src.data_sources.siata.SIATAClient._scrape_weather_data')
+    @patch('data_sources.siata.SIATAClient._fetch_from_api')
+    @patch('data_sources.siata.SIATAClient._scrape_weather_data')
     def test_get_weather_current_fallback_to_scraping(self, mock_scrape, mock_api):
         """Debe hacer fallback a scraping si API falla."""
         mock_api.return_value = None
