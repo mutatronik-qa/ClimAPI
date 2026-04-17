@@ -14,17 +14,16 @@ import sys
 # Añadir el directorio raíz del proyecto al path ANTES de cualquier import
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, project_root)
-print('DEBUG test_open_meteo sys.path[0]=', sys.path[0])
-print('DEBUG test_open_meteo project_root=', project_root)
 
 import pytest
+import requests
 from unittest.mock import patch, Mock
 
-from data_sources.open_meteo import (
-    validate_coordinates,
+from data_sources.open_meteo import (    validate_coordinates,
     get_weather_data,
     get_weather_by_city_name
 )
+
 
 
 class TestValidateCoordinates:
@@ -77,7 +76,7 @@ class TestGetWeatherData:
         # Verificar que se llamó con la URL correcta
         mock_get.assert_called_once()
         call_args = mock_get.call_args
-        assert "https://api.open-meteo.com/v1/forecast" in call_args[1]['url']
+        assert call_args[0][0] == "https://api.open-meteo.com/v1/forecast"
 
         # Verificar parámetros
         params = call_args[1]['params']
@@ -93,7 +92,7 @@ class TestGetWeatherData:
     @patch('data_sources.open_meteo.requests.get')
     def test_get_weather_data_maneja_timeout(self, mock_get):
         """Debe lanzar TimeoutError cuando hay timeout."""
-        mock_get.side_effect = TimeoutError("Connection timed out")
+        mock_get.side_effect = requests.exceptions.Timeout("Connection timed out")
 
         with pytest.raises(TimeoutError, match="API Open-Meteo tardó demasiado"):
             get_weather_data(latitude=6.244, longitude=-75.581)
@@ -101,7 +100,7 @@ class TestGetWeatherData:
     @patch('data_sources.open_meteo.requests.get')
     def test_get_weather_data_maneja_connection_error(self, mock_get):
         """Debe lanzar ConnectionError cuando falla la conexión."""
-        mock_get.side_effect = ConnectionError("Network error")
+        mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
 
         with pytest.raises(ConnectionError, match="No se pudo conectar a Open-Meteo"):
             get_weather_data(latitude=6.244, longitude=-75.581)
@@ -110,7 +109,9 @@ class TestGetWeatherData:
     def test_get_weather_data_maneja_http_error(self, mock_get):
         """Debe lanzar Exception cuando hay error HTTP."""
         mock_response = Mock()
-        mock_response.raise_for_status.side_effect = Exception("404 Client Error")
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError()
+        response = Mock(status_code=404)
+        mock_response.raise_for_status.side_effect.response = response
         mock_get.return_value = mock_response
 
         with pytest.raises(Exception, match="Error en API Open-Meteo"):
@@ -147,12 +148,12 @@ class TestGetWeatherByCityName:
 
         # Verificar geocoding call
         geocode_call = mock_get.call_args_list[0]
-        assert "geocoding-api.open-meteo.com" in geocode_call[1]['url']
+        assert geocode_call[0][0] == "https://geocoding-api.open-meteo.com/v1/search"
         assert geocode_call[1]['params']['name'] == "Medellín"
 
         # Verificar weather call
         weather_call = mock_get.call_args_list[1]
-        assert "api.open-meteo.com" in weather_call[1]['url']
+        assert weather_call[0][0] == "https://api.open-meteo.com/v1/forecast"
         params = weather_call[1]['params']
         assert params['latitude'] == 6.244
         assert params['longitude'] == -75.581
