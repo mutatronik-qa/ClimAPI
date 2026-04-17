@@ -113,6 +113,15 @@ def valid_city_request():
 # ============================================================================
 
 @pytest.fixture
+def api_client():
+    """
+    Cliente de prueba para la API FastAPI usando mainback.app.
+    """
+    from mainback import app
+    return TestClient(app)
+
+
+@pytest.fixture
 def mock_requests_get():
     """
     Mock de requests.get para evitar llamadas reales a internet.
@@ -194,3 +203,69 @@ def cleanup_cache(tmp_path):
     if cache_dir.exists():
         for f in cache_dir.glob("*"):
             f.unlink()
+
+
+@pytest.fixture
+def sample_openmeteo_response():
+    """
+    Respuesta simulada completa de Open-Meteo API.
+    """
+    return {
+        "latitude": 6.244,
+        "longitude": -75.581,
+        "generationtime_ms": 0.5,
+        "utc_offset_seconds": -18000,
+        "timezone": "America/Bogota",
+        "hourly": {
+            "time": [
+                "2024-01-01T00:00:00Z",
+                "2024-01-01T01:00:00Z",
+                "2024-01-01T02:00:00Z"
+            ],
+            "temperature_2m": [25.0, 26.0, 24.5],
+            "relative_humidity_2m": [70.0, 75.0, 68.0],
+            "precipitation": [0.0, 0.5, 0.0],
+            "wind_speed_10m": [5.0, 6.0, 4.5],
+            "wind_direction_10m": [180.0, 190.0, 170.0],
+            "surface_pressure": [1013.0, 1012.0, 1014.0],
+            "cloudcover": [20.0, 30.0, 15.0],
+            "dew_point_2m": [18.0, 19.0, 17.5],
+            "visibility": [10000.0, 9500.0, 10500.0],
+            "shortwave_radiation": [0.0, 10.0, 5.0]
+        }
+    }
+
+
+@pytest.fixture
+def sample_openweathermap_response():
+    """
+    Respuesta simulada de OpenWeatherMap API.
+    """
+    return {
+        "coord": {"lon": -75.581, "lat": 6.244},
+        "main": {
+            "temp": 25.0,
+            "humidity": 70.0,
+            "pressure": 1013.0
+        },
+        "wind": {
+            "speed": 5.0,  # m/s
+            "deg": 180.0
+        },
+        "clouds": {"all": 20.0},
+        "rain": {"1h": 0.0},
+        "visibility": 10000,
+        "dt": 1704067200  # 2024-01-01T00:00:00Z
+    }
+
+
+@pytest.fixture
+def mock_cache_manager():
+    """
+    Mock para CacheManager.
+    """
+    mock_cache = Mock()
+    mock_cache.get_processed_data.return_value = None
+    mock_cache.set_processed_data.return_value = None
+    mock_cache.get_stats.return_value = {"hits": 0, "misses": 0}
+    return mock_cache

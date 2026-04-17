@@ -84,6 +84,34 @@ Ubicaciones disponibles: medellin, bello, envigado, bogota
 - fastapi, uvicorn, pydantic
 - diskcache (caché)
 
+## 🧪 Tests
+
+```bash
+# Instalar pytest si no está
+pip install pytest pytest-asyncio
+
+# Todos los tests
+pytest tests/ -v
+
+# Solo unit tests (transform, storage)
+pytest tests/test_transform.py tests/test_storage.py -v
+
+# Tests de API (usa TestClient, sin llamada real)
+pytest tests/test_api_endpoints_v2.py -v
+
+# Tests del dashboard (funciones auxiliares)
+pytest tests/test_dashboard.py -v
+```
+
+O ejecutar scripts incluidos:
+```bash
+# Windows
+run_tests.bat
+
+# Linux/Mac
+bash run_tests.sh
+```
+
 ## 📄 Licencia
 
 Código abierto para uso educativo y personal.
