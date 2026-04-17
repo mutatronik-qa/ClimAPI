@@ -1,38 +1,79 @@
-# 🌤️ Proyecto ClimAPI - Dashboard Meteorológico
+# 🌤️ ClimAPI - Sistema de Datos Meteorológicos
 
-Proyecto completo en Python para consumir datos meteorológicos desde la API pública de Open-Meteo y visualizarlos en un dashboard interactivo.
+Proyecto completo en Python para consumir datos meteorológicos desde múltiples APIs públicas y visualizarlos en un dashboard interactivo o mediante una API REST.
 
 ## 📋 Descripción
 
-Este proyecto permite:
-- Consumir datos horarios del clima (temperatura, humedad, precipitación y velocidad del viento) desde Open-Meteo
-- Procesar y transformar los datos con Pandas
-- Guardar los datos en formato CSV
-- Visualizar los datos en un dashboard interactivo con Streamlit
+ClimAPI es un sistema robusto de procesamiento de datos meteorológicos que:
+- Consume datos de múltiples APIs meteorológicas (Open-Meteo, OpenWeatherMap, MeteoBlue, SIATA, IDEAM)
+- Procesa, normaliza y valida datos con Pandas
+- Proporciona una API REST con FastAPI
+- Visualiza datos en un dashboard interactivo con Streamlit
+- Sistema de caché para optimizar rendimiento
+- Reportes de calidad de datos
 
 ## 🗂️ Estructura del Proyecto
 
 ```
 ClimAPI/
+├── api/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── dependencies.py
+│   └── routes/
+│       ├── __init__.py
+│       ├── health.py
+│       ├── locations.py
+│       └── weather.py
 │
 ├── data_sources/
-│   └── open_meteo.py          # Módulo para consumir la API de Open-Meteo
+│   ├── __init__.py
+│   ├── base.py
+│   ├── base_source.py
+│   ├── meteoblue.py
+│   ├── nsrdb_nasa.py
+│   ├── open_meteo.py
+│   ├── openweathermap.py
+│   ├── power_larc.py
+│   ├── radar_ideam.py
+│   ├── reimagine_energy.py
+│   └── siata.py
 │
 ├── processing/
-│   ├── transform.py            # Transformación y limpieza de datos
-│   └── storage.py              # Guardado y carga de datos CSV
+│   ├── __init__.py
+│   ├── api_data_extractors.py
+│   ├── data_diagnostics.py
+│   ├── data_normalizer.py
+│   ├── data_processor.py
+│   ├── data_quality_report.py
+│   ├── storage.py
+│   └── transform.py
 │
 ├── dashboard/
-│   └── app.py                  # Dashboard interactivo con Streamlit
+│   ├── __init__.py
+│   └── app.py
 │
 ├── config/
-│   └── settings.json           # Configuración del proyecto
+│   └── settings.py
 │
-├── data/                       # Directorio para almacenar datos CSV (se crea automáticamente)
+├── scripts/
+│   ├── __init__.py
+│   └── ipynb_analyzer.py
 │
-├── main.py                     # Script principal que orquesta todo el flujo
-├── requirements.txt            # Dependencias del proyecto
-└── README.md                   # Este archivo
+├── tests/
+│   ├── __init__.py
+│   └── [archivos de pruebas]
+│
+├── app/
+│   ├── config.py
+│   └── services/
+│       └── base.py
+│
+├── data/                     # Directorio para datos (creado automáticamente)
+├── cache/                   # Directorio para caché (creado automáticamente)
+├── main.py                  # API FastAPI + script de procesamiento
+├── requirements.txt         # Dependencias del proyecto
+└── README.md
 ```
 
 ## 🚀 Instalación
@@ -59,114 +100,135 @@ ClimAPI/
    pip install -r requirements.txt
    ```
 
+5. **Configurar variables de entorno (opcional)**
+   Crear un archivo `.env` con las API keys necesarias:
+   ```env
+   OPENWEATHER_API_KEY=tu_api_key
+   METEOBLUE_API_KEY=tu_api_key
+   METEOBLUE_SHARED_SECRET=tu_shared_secret
+   CACHE_TTL_MINUTES=15
+   ```
+
 ## 📖 Uso
 
-### 1. Obtener y procesar datos
+### Modo 1: API FastAPI
 
-Ejecuta el script principal para consumir datos de la API, procesarlos y guardarlos:
+Ejecutar el servidor API:
+```bash
+python main.py api
+```
 
+El servidor se iniciara en `http://localhost:8000`
+
+Documentación interactiva disponible en:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+
+### Modo 2: Dashboard Streamlit
+
+Ejecutar el dashboard:
+```bash
+streamlit run dashboard/app.py
+```
+
+El dashboard se abrirá en `http://localhost:8501`
+
+### Modo 3: Script de Procesamiento
+
+Ejecutar el pipeline de datos completo:
 ```bash
 python main.py
 ```
 
 Este script:
-- Obtiene datos meteorológicos para Medellín (configurado por defecto)
-- Procesa y limpia los datos
-- Guarda los datos en `data/weather_data.csv`
+- Extrae datos de múltiples APIs
+- Combina y normaliza los datos
+- Valida y repara calidad de datos
+- Genera reporte de calidad
+- Guarda datos en CSV
 
-### 2. Visualizar datos en el dashboard
+### Endpoints Principales
 
-Ejecuta el dashboard con Streamlit:
-
-```bash
-streamlit run dashboard/app.py
-```
-
-El dashboard se abrirá automáticamente en tu navegador (generalmente en `http://localhost:8501`).
-
-### 3. Personalizar la ubicación
-
-Edita el archivo `config/settings.json` para cambiar la ubicación:
-
-```json
-{
-    "location": {
-        "name": "Tu Ciudad",
-        "latitude": 6.244,
-        "longitude": -75.581,
-        "timezone": "America/Bogota"
-    }
-}
-```
+| Endpoint | Descripción |
+|----------|-------------|
+| `GET /` | Información básica de la API |
+| `GET /api/v1/health` | Estado de salud de la API |
+| `POST /api/v1/weather/current` | Datos meteorológicos actuales |
+| `GET /api/v1/weather/meteoblue` | Datos de MeteoBlue |
+| `GET /api/v1/weather/openweathermap` | Datos de OpenWeatherMap |
+| `GET /api/v1/locations/default` | Ubicación por defecto (Medellín) |
+| `GET /api/v1/cache/stats` | Estadísticas de caché |
+| `DELETE /api/v1/cache` | Limpiar caché |
 
 ## 🎯 Características del Dashboard
 
 - **Gráficos interactivos** con Plotly:
-  - Temperatura (°C) - Gráfico de línea
-  - Humedad Relativa (%) - Gráfico de línea
-  - Precipitación (mm) - Gráfico de barras
-  - Velocidad del Viento (km/h) - Gráfico de línea
+  - Temperatura (°C)
+  - Humedad Relativa (%)
+  - Precipitación (mm)
+  - Velocidad del Viento (km/h)
 
-- **Filtros de fecha**: Selecciona rangos de fechas para visualizar datos específicos
+- **Filtros de fecha**: Selecciona rangos de fechas específicos
 
-- **Estadísticas generales**: Muestra métricas clave en el sidebar
+- **Estadísticas generales**: Métricas clave en sidebar
 
-- **Tabla de datos**: Visualiza los datos detallados en formato tabla
+- **Tabla de datos**: Visualización detallada
 
-- **Descarga de datos**: Descarga los datos filtrados en formato CSV
+- **Descarga de datos**: Exporta datos filtrados en CSV
 
 ## 🔧 Módulos del Proyecto
 
-### `data_sources/open_meteo.py`
-- Función `get_weather_data()`: Consume la API de Open-Meteo
-- Manejo de errores y validación de coordenadas
-- Parámetros configurables (latitud, longitud, fechas, zona horaria)
+### `data_sources/`
+- **open_meteo.py**: API gratuita de Open-Meteo
+- **openweathermap.py**: OpenWeatherMap (requiere API key)
+- **meteoblue.py**: MeteoBlue (requiere API key)
+- **siata.py**: Datos del SIATA (Medellín)
+- **radar_ideam.py**: Datos del RADAR IDEAM
 
-### `processing/transform.py`
-- `json_to_dataframe()`: Convierte JSON a DataFrame
-- `clean_and_standardize()`: Limpia y estandariza columnas
-- `process_weather_data()`: Función principal de procesamiento
-
-### `processing/storage.py`
-- `save_to_csv()`: Guarda DataFrames en CSV
-- `load_from_csv()`: Carga DataFrames desde CSV
-- Soporte para append y timestamps
-
-### `dashboard/app.py`
-- Dashboard completo con Streamlit
-- Visualizaciones interactivas con Plotly
-- Filtros y estadísticas en tiempo real
+### `processing/`
+- **transform.py**: Transformación de datos JSON a DataFrame
+- **storage.py**: Guardado/carga de CSV y gestión de caché
+- **data_normalizer.py**: Normalización y combinación de fuentes
+- **data_diagnostics.py**: Diagnóstico y reparación de datos
+- **data_quality_report.py**: Generación de reportes de calidad
 
 ### `main.py`
-- Orquesta todo el flujo del proyecto
-- Carga configuración
-- Ejecuta: consumo → procesamiento → guardado
+- API FastAPI completa con endpoints meteorológicos
+- Pipeline de procesamiento de datos
+- Sistema de caché integrado
+- Configuración CORS para frontend
+
+## 📊 Calidad de Datos
+
+El sistema incluye validación y reporte de calidad:
+- Detección de datos faltantes
+- Reparación automática de valores inválidos
+- Validación de esquema de datos
+- Reportes en formato JSON
 
 ## 🔮 Expansión Futura
 
-El proyecto está diseñado para ser fácilmente expandible:
-
-- **Nuevas fuentes de datos**: Agrega nuevos módulos en `data_sources/` (ej: `openweather.py`, `noaa.py`)
-- **Más procesamiento**: Extiende `processing/transform.py` con nuevas transformaciones
-- **Análisis avanzado**: Agrega módulos de análisis en una nueva carpeta `analysis/`
-- **Base de datos**: Modifica `storage.py` para guardar en bases de datos (PostgreSQL, MongoDB, etc.)
+El proyecto es fácilmente expandible:
+- **Nuevas fuentes**: Agregar módulos en `data_sources/`
+- **Análisis avanzado**: Nueva carpeta `analysis/`
+- **Base de datos**: Modificar `storage.py` para PostgreSQL/MongoDB
+- **Alertas**: Implementar sistema de notificaciones
 
 ## 📝 Notas
 
-- La API de Open-Meteo es gratuita y no requiere API key
-- Los datos se obtienen en tiempo real (forecast)
-- El proyecto usa coordenadas de Medellín por defecto (Lat: 6.244, Lon: -75.581)
-- Los datos se guardan en formato CSV para fácil acceso y portabilidad
+- Open-Meteo es gratuita y no requiere API key
+- OpenWeatherMap y MeteoBlue requieren API keys
+- Datos por defecto: Medellín, Colombia (Lat: 6.244, Lon: -75.581)
+- Sistema de caché configurable (por defecto 15 minutos)
 
 ## 🤝 Contribuciones
 
-Este proyecto está diseñado para ser un punto de partida. Siéntete libre de:
-- Agregar nuevas fuentes de datos
-- Mejorar las visualizaciones
-- Agregar análisis estadísticos
-- Implementar alertas meteorológicas
+Puntos de expansión sugeridos:
+- Nuevas fuentes de datos meteorológicos
+- Mejoras en visualizaciones
+- Análisis estadísticos
+- Alertas meteorológicas
 
 ## 📄 Licencia
 
-Este proyecto es de código abierto y está disponible para uso educativo y personal.
-
+Proyecto de código abierto para uso educativo y personal.
