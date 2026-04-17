@@ -572,18 +572,18 @@ async def fetch_radar_ideam(lat: float = Query(...), lon: float = Query(...)):
     
 
 if __name__ == "__main__":
-    import uvicorn
-    import os
     import sys
     
-    # Verificar si se debe ejecutar como API FastAPI o como script original
     if len(sys.argv) > 1 and sys.argv[1] == "api":
-        # Ejecutar como servidor FastAPI
+        import uvicorn
         print("🚀 Iniciando servidor FastAPI...")
         print("📖 Documentación disponible en: http://localhost:8000/docs")
         uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    elif len(sys.argv) > 1 and sys.argv[1] == "dashboard":
+        import subprocess
+        print("🌐 Abriendo dashboard Streamlit...")
+        subprocess.run(["streamlit", "run", "dashboard/app.py"])
     else:
-        # Ejecutar script original
         main()
 
 def sanitize_filename(filename: str) -> str:
