@@ -1,32 +1,44 @@
-# Backend dependencies
-fastapi
-uvicorn
-pydantic
-pydantic-settings
+# ClimAPI Requirements
 
-# Data processing
-pandas
-requests
-bs4
-numpy
+# Core
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# HTTP Client (async)
+httpx>=0.25.0
+requests>=2.31.0
+
+# Data Processing
+pandas>=2.1.0
+numpy>=1.24.0
 
 # Caching
-diskcache
-nbformat
+diskcache>=5.6.0
+nbformat>=5.9.0
 
 # Dashboard and mapping
-streamlit
-plotly
-folium
-streamlit-folium
+streamlit>=1.29.0
+plotly>=5.18.0
+folium>=0.14.0
+streamlit-folium>=0.4.0
 
-# Cloud and radar
-boto3
-arm-pyart
+# Cloud and radar (optional)
+boto3>=1.28.0
+# arm-pyart>=1.14.0  # Windows not supported
+
+# Storage
+pyarrow>=14.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-multipart>=0.0.6
 
 # Development and testing
-pytest
-pytest-asyncio
-black
-isort
-mypy
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.7.0

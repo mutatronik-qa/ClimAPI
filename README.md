@@ -1,186 +1,200 @@
-# 🌤️ ClimAPI - Dashboard Meteorológico
+# 🌤️ ClimAPI - Weather Dashboard v2.0
 
-Proyecto en Python para obtener datos meteorológicos y visualizarlos en un dashboard interactivo.
+Clean Architecture weather API with multiple data sources.
 
-## 📋 Descripción
+## 🏗️ Architecture
 
-ClimAPI consume datos de la API gratuita Open-Meteo y los visualiza en un dashboard Streamlit.
-
-## 🗂️ Estructura
+This project follows **Clean Architecture** principles with proper separation of concerns:
 
 ```
-ClimAPI/
-├── api/           # Endpoints FastAPI
-├── app/           # Configuración y servicios de la aplicación
-├── data_sources/  # Consumo de APIs meteorológicas
-├── processing/    # Transformación y almacenamiento de datos
-├── dashboard/     # Dashboard Streamlit
-├── config/        # Configuración centralizada
-├── data/          # Datos CSV generados
-├── notebooks/     # Jupyter notebooks de análisis
-├── scripts/       # Scripts auxiliares
-├── tests/         # Pruebas pytest
-├── frontend/      # Frontend Next.js (opcional)
-├── README.md
-└── requirements.txt
+climapi/
+├── domain/                    # Core business logic (no dependencies)
+│   ├── entities/              # WeatherData, Location, etc.
+│   └── interfaces/            # Abstract base classes (ports)
+├── application/               # Use cases (orchestration)
+│   └── use_cases/             # GetCurrentWeather, CombineSources, etc.
+├── infrastructure/             # External adapters
+│   └── adapters/
+│       ├── sources/           # API implementations (Open-Meteo, etc.)
+│       ├── cache/             # Cache implementations
+│       └── storage/           # CSV/Parquet storage
+├── api/                       # FastAPI (clean routes)
+├── dashboard/                 # Streamlit (non-blocking)
+├── data_pipeline/             # ETL orchestration
+├── laboratory/                # Data exploration module
+├── shared/                    # Config, utils
+├── docs/                      # Architecture & migration guides
+└── tests/                     # Unit & integration tests
 ```
 
-## 🚀 Instalación
+## 🚀 Quick Start
+
+### 1. Install Dependencies
 
 ```bash
-python -m venv venv
-venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 📖 Uso
-
-### 1. Obtener datos (Terminal)
+### 2. Run API
 
 ```bash
-python main.py
+python -m api.main
+# or
+uvicorn api.main:app --reload
 ```
 
-Genera `data/weather_data.csv` con datos de Open-Meteo.
+API docs: http://localhost:8000/docs
 
-### 2. Dashboard (Streamlit)
+### 3. Run Dashboard
 
 ```bash
-python main.py dashboard
-# o directamente:
 streamlit run dashboard/app.py
 ```
 
-Dashboard en `http://localhost:8501` con 4 páginas:
-- **📊 Dashboard**: Gráficos y análisis de datos meteorológicos
-- **🗺️ Mapa**: Visualización de radares IDEAM con capas GeoJSON
-- **📓 Notebooks**: Análisis y extracción de datos desde notebooks Jupyter
-- **⚙️ Configuración**: Gestión de API keys y credenciales
+Dashboard: http://localhost:8501
 
-### 3. API FastAPI (Opcional)
+### 4. Run Data Pipeline
 
 ```bash
-python main.py api
+python -m data_pipeline.main --lat 6.244 --lon -75.581 --mode current
 ```
 
-API en `http://localhost:8000` (docs en `/docs`).
+## 📡 Available Endpoints
 
-## ⚙️ Configuración
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/health` | Health check |
+| `GET /api/v1/sources` | List available sources |
+| `POST /api/v1/weather/current` | Get current weather |
+| `GET /api/v1/weather/forecast` | Get weather forecast |
+| `GET /api/v1/weather/combined` | Combine multiple sources |
+| `GET /api/v1/weather/quality` | Data quality report |
+| `GET /api/v1/cache/stats` | Cache statistics |
+| `DELETE /api/v1/cache` | Clear cache |
 
-Editar `config/settings.py` o variables de entorno en `.env`:
+## 🌤️ Weather Sources
 
-```env
-# Ubicación por defecto: Medellín
-DEFAULT_LOCATION=medellin
+Priority (free, no API key):
+- **Open-Meteo** - Primary source (free, no key)
+- **IDEAM Radar** - Colombian radar data
+- **NASA Power** - Solar/weather data
 
-#TTL de caché (minutos)
-CACHE_TTL_MINUTES=15
+Optional (requires API key):
+- OpenWeatherMap
+- MeteoBlue
+- SIATA
+
+## 🔌 Adding New Sources
+
+Create a new adapter following this pattern:
+
+```python
+# infrastructure/adapters/sources/new_source.py
+from domain.entities.weather import WeatherData, WeatherSourceInfo
+from domain.interfaces.sources import WeatherDataSource
+
+class NewSourceAdapter(WeatherDataSource):
+    @property
+    def name(self) -> str:
+        return "new-source"
+    
+    @property
+    def info(self) -> WeatherSourceInfo:
+        return WeatherSourceInfo(
+            name="new-source",
+            display_name="New Source",
+            requires_api_key=True,
+            is_free=False
+        )
+    
+    async def fetch_current(self, lat, lon, timezone):
+        # Implement async fetch
+        pass
+    
+    # ... implement other required methods
 ```
 
-Ubicaciones disponibles: medellin, bello, envigado, bogota
+Then register it:
 
-## 🎯 Características Dashboard
+```python
+SourceRegistry.register(NewSourceAdapter())
+```
 
-### 📊 Dashboard Principal
-- Gráficos interactivos (Plotly): Temperatura, Humedad, Precipitación, Viento
-- Filtros por rango de fechas
-- Estadísticas generales
-- Tabla de datos
-- Descarga CSV
-- Integración múltiple de APIs (Open-Meteo, OpenWeatherMap, MeteoBlue, RADAR IDEAM)
+## 📊 Laboratory Module
 
-### 🗺️ Mapa Meteorológico
-- Visualización de radares IDEAM en tiempo real
-- Capas GeoJSON para límites geográficos
-- Mapa interactivo centrado en Medellín
-- Información de precipitación por radar
+For data exploration in notebooks or scripts:
 
-### ⚙️ Configuración de APIs
-- Interfaz para configurar API keys (OpenWeatherMap, MeteoBlue)
-- Gestión de URLs de servicios (SIATA, IDEAM)
-- Validación y guardado seguro de credenciales
-- Información de ayuda para obtener API keys
+```python
+from laboratory import create_laboratory
 
-### 📓 Análisis de Notebooks
-- Exploración automática de notebooks Jupyter (.ipynb)
-- Extracción de URLs y datasets desde código Python
-- Descarga segura de CSVs desde notebooks
-- Clasificación de datos realtime/historical
-- Estadísticas detalladas por notebook
+lab = create_laboratory()
 
-## 📦 Dependencies
+# Load data
+df = lab.load_cleaned_data()
 
-- fastapi, uvicorn, pydantic, pydantic-settings
-- pandas, numpy, requests, bs4
-- streamlit, plotly, folium, streamlit-folium
-- diskcache, nbformat
-- boto3, arm-pyart
+# Get quality metrics
+metrics = lab.get_quality_metrics(df)
 
-## 🛠️ Dependencias de desarrollo
+# Export
+lab.export_to_csv(df, "export.csv")
+```
 
-- pytest, pytest-asyncio, black, isort, mypy
-
-## 🧪 Tests
+## 🐳 Docker
 
 ```bash
-# Instalar pytest si no está
-pip install pytest pytest-asyncio
+# Start all services
+docker-compose up
 
-# Todos los tests
+# Or manually
+docker build -t climapi .
+docker run -p 8000:8000 climapi
+```
+
+## 🧪 Testing
+
+```bash
+# Run all tests
 pytest tests/ -v
 
-# Solo unit tests (transform, storage)
-pytest tests/test_transform.py tests/test_storage.py -v
+# With coverage
+pytest --cov=. --cov-report=html
 
-# Tests de API (usa TestClient, sin llamada real)
-pytest tests/test_api_endpoints_v2.py -v
-
-# Tests del dashboard (funciones auxiliares)
-pytest tests/test_dashboard.py -v
+# Specific test file
+pytest tests/unit/test_new_architecture.py -v
 ```
 
-O ejecutar scripts incluidos:
-```bash
-# Windows
-run_tests.bat
+## 📁 Project Files
 
-# Linux/Mac
-bash run_tests.sh
+- `docs/ARCHITECTURE.md` - Detailed architecture explanation
+- `docs/MIGRATION.md` - Migration guide from v1.0 to v2.0
+- `.env.example` - Environment variables template
+- `requirements.txt` - Python dependencies
+
+## ⚙️ Configuration
+
+Edit `.env` file:
+
+```env
+# Default location
+DEFAULT_LATITUDE=6.244
+DEFAULT_LONGITUDE=-75.581
+DEFAULT_TIMEZONE=America/Bogota
+
+# Cache settings
+CACHE_BACKEND=memory
+CACHE_TTL_CURRENT=900
+
+# API Keys (optional)
+# OPENWEATHER_API_KEY=your_key
+# METEOBLUE_API_KEY=your_key
 ```
 
-## � Cambios Recientes
+## 📖 Documentation
 
-### v1.0.1 - Abril 2026
+- [Architecture](docs/ARCHITECTURE.md)
+- [Migration Guide](docs/MIGRATION.md)
+- API docs at `/docs` when running
 
-#### ✅ Integración SIATA
-- **Agregado**: Soporte completo para cliente SIATA (Sistema de Alerta Temprana de Medellín)
-- **Configuración**: URL operativa `https://www.siata.gov.co/operacional/`
-- **Uso**: Cliente SIATA ahora disponible en `main.py` y endpoints API
+## License
 
-#### ✅ Corrección Radar IDEAM
-- **Arreglado**: Error `boto3.UNSIGNED` → `botocore.UNSIGNED`
-- **Compatibilidad**: Acceso público a bucket S3 de IDEAM funcionando correctamente
-
-#### ✅ Seguridad y Configuración
-- **Agregado**: Archivo `.gitignore` para proteger `.env` y archivos sensibles
-- **Migrado**: Pydantic v1 → v2 (`pydantic_settings.BaseSettings`)
-- **Corregido**: Parsing de `ALLOWED_ORIGINS` en `.env` (lista separada por comas)
-- **Centralizado**: API keys ahora usan configuración centralizada en lugar de `os.getenv()`
-
-#### ✅ Compatibilidad Windows
-- **Agregado**: Función `_safe_timestamp()` para nombres de archivo válidos en Windows
-- **Arreglado**: Error `[Errno 22] Invalid argument` al guardar archivos JSON
-
-#### ✅ OpenWeatherMap HTTPS
-- **Actualizado**: URL base cambiada de `http://` a `https://` (requerido por API)
-- **Seguridad**: Todas las llamadas API ahora usan HTTPS
-
-#### ✅ Web Scraping SIATA Histórico
-- **Mejorado**: Cliente SIATA con scraping de datos históricos
-- **Nuevo método**: `get_historical_weather(days=7)` para datos pasados
-- **Integración**: Datos históricos junto con servicios gratuitos
-- **Compatibilidad**: Fallback automático si scraping falla
-
-## �📄 Licencia
-
-Código abierto para uso educativo y personal.
+Open source for educational and personal use.
