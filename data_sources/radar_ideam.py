@@ -19,6 +19,7 @@ aws s3 ls --no-sign-request s3://s3-radaresideam/
 """
 
 import boto3
+import botocore
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 import logging
@@ -48,7 +49,7 @@ class RadarIDEAMClient:
             's3',
             region_name=self.region,
             config=boto3.session.Config(
-                signature_version=boto3.UNSIGNED  # Acceso público
+                signature_version=botocore.UNSIGNED  # Acceso público
             )
         )
         

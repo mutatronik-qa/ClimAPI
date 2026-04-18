@@ -47,8 +47,8 @@ from processing.data_quality_report import DataQualityReport
 from processing.api_data_extractors import APIDataExtractor
 
 from config.settings import settings
-#from src.data_sources.siata import SIATAClient
-#from src.data_sources.radar_ideam import RadarIDEAMClient
+from data_sources.siata import SIATAClient
+from data_sources.radar_ideam import RadarIDEAMClient
 
 # Configuración de logging
 logging.basicConfig(
@@ -122,7 +122,12 @@ OWM_CFG = {
 }
 owm_client = OpenWeatherMap(OWM_CFG)
 
-siata_client = SIATAClient({"api_url": settings.SIATA_API_URL})
+siata_client = SIATAClient({
+    "api_url": settings.SIATA_API_URL,
+    "operational_url": settings.SIATA_OPERACIONAL_URL,
+    "timeout": settings.SIATA_TIMEOUT,
+    "retry_attempts": settings.SIATA_RETRY_ATTEMPTS,
+})
 radar_client = RadarIDEAMClient({
     "bucket": settings.IDEAM_RADAR_BUCKET,
     "region": settings.IDEAM_RADAR_REGION

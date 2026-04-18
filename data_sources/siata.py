@@ -43,7 +43,10 @@ class SIATAClient:
         """
         self.config = config or {}
         self.base_url = config.get("api_url", "https://www.siata.gov.co")
-        self.operacional_url = f"{self.base_url}/operacional/"
+        self.operacional_url = config.get(
+            "operational_url",
+            f"{self.base_url.rstrip('/')}/operacional/"
+        )
         self.timeout = config.get("timeout", 15)
         self.retry_attempts = config.get("retry_attempts", 3)
         self.session = requests.Session()
