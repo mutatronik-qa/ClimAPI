@@ -1,45 +1,43 @@
 """
-Weather Service - Orchestrates all weather sources.
-Simple, clean, production-ready.
+Weather Service - SINGLE SOURCE OF TRUTH
+All logic lives here: sources, caching, merging, error handling.
+API, CLI, and Dashboard MUST use this service.
 """
+import csv
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from backend.sources import get_all_sources, PRIORITY_SOURCES
+from backend.cache import SimpleCache
+from backend.sources import SOURCES, PRIORITY, get_source
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
+# ====================
+# Weather Service
+# ====================
+
 class WeatherService:
     """
-    Orchestrates multiple weather sources.
-    
-    Features:
-    - Calls all available sources concurrently
-    - Skips failing sources (no crash)
-    - Returns merged results or best available
-    - Simple caching with TTL
+    Single source of truth for weather data.
+    - Calls all sources concurrently
+    - Handles failures gracefully
+    - Caches results
+    - Returns merged or per-source data
     """
     
-    def __init__(self, cache_ttl: int = 900):  # 15 min default
-        self.sources = get_all_sources()
-        self.cache_ttl = cache_ttl
-        self._cache: Dict[str, tuple[Any, float]] = {}
-    
-    def _get_cache(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get cached result if not expired."""
-        if key in self._cache:
-            data, timestamp = self._cache[key]
-            if time.time() - timestamp < self.cache_ttl:
-                return data
-        return None
-    
-    def _set_cache(self, key: str, data: Dict[str, Any]) -> None:
-        """Cache result."""
-        self._cache[key] = (data, time.time())
+    def __init__(self, cache_ttl: int = 900):
+        self.cache = SimpleCache(cache_ttl)
+        self.default_ttl = cache_ttl
     
     def get_weather(
         self,
@@ -50,38 +48,34 @@ class WeatherService:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Get weather data from one or all sources.
+        Get weather data.
         
         Args:
-            lat: Latitude
-            lon: Longitude
+            lat, lon: Coordinates
             source: Specific source name, or None for all
             use_cache: Whether to use caching
-            **kwargs: Additional params (timezone, etc.)
             
         Returns:
-            If source specified: single result dict
-            If source is None: list of results from all sources
+            Single dict with merged data OR all_sources list
         """
-        cache_key = f"weather:{lat}:{lon}:{source or 'all'}"
+        cache_key = f"weather:{source or 'all'}:{lat}:{lon}"
         
         # Check cache
         if use_cache:
-            cached = self._get_cache(cache_key)
+            cached = self.cache.get(cache_key)
             if cached:
                 logger.info("📦 Using cached data")
                 return cached
         
+        # Fetch from source(s)
         if source:
-            # Get from specific source
             result = self._call_source(source, lat, lon, **kwargs)
         else:
-            # Get from all sources concurrently
             result = self._call_all_sources(lat, lon, **kwargs)
         
         # Cache result
         if use_cache and result:
-            self._set_cache(cache_key, result)
+            self.cache.set(cache_key, result, self.default_ttl)
         
         return result
     
@@ -93,28 +87,34 @@ class WeatherService:
         **kwargs
     ) -> Dict[str, Any]:
         """Call a specific source."""
-        if source_name not in self.sources:
+        source_func = get_source(source_name)
+        
+        if not source_func:
             return {
                 "error": f"Unknown source: {source_name}",
-                "available_sources": list(self.sources.keys())
+                "available": list(SOURCES.keys())
             }
         
         start = time.time()
         try:
-            source_func = self.sources[source_name]
             result = source_func(lat, lon, **kwargs)
             elapsed = time.time() - start
             
-            logger.info(f"✅ {source_name}: {elapsed:.2f}s")
+            if result.get("error"):
+                logger.warning(f"❌ {source_name}: {result['error']} ({elapsed:.2f}s)")
+            else:
+                logger.info(f"✅ {source_name}: {elapsed:.2f}s")
+            
+            result["response_time"] = elapsed
             return result
             
         except Exception as e:
             elapsed = time.time() - start
-            logger.error(f"❌ {source_name}: failed after {elapsed:.2f}s - {e}")
+            logger.error(f"❌ {source_name}: EXCEPTION {e} ({elapsed:.2f}s)")
             return {
-                "error": str(e),
                 "source": source_name,
-                "timestamp": datetime.now().isoformat()
+                "error": str(e),
+                "response_time": elapsed
             }
     
     def _call_all_sources(
@@ -123,96 +123,135 @@ class WeatherService:
         lon: float,
         **kwargs
     ) -> Dict[str, Any]:
-        """Call all sources concurrently and merge results."""
+        """Call all sources concurrently and merge."""
         results: List[Dict[str, Any]] = []
-        errors: List[str] = []
         
-        def call_source(name: str) -> tuple[str, Dict[str, Any], float]:
+        def fetch(name: str) -> tuple[str, Dict[str, Any], float]:
             start = time.time()
             try:
-                func = self.sources[name]
+                func = get_source(name)
                 data = func(lat, lon, **kwargs)
                 elapsed = time.time() - start
                 
-                # Check if we got valid data
-                if data.get("temperature") is not None:
-                    logger.info(f"✅ {name}: success ({elapsed:.2f}s)")
-                    return (name, data, elapsed)
-                else:
-                    logger.warning(f"⚠️ {name}: no data ({elapsed:.2f}s)")
-                    return (name, {"source": name, "error": data.get("error", "no data")}, elapsed)
-                    
+                status = "✅" if not data.get("error") and data.get("temperature") else "❌"
+                logger.info(f"{status} {name}: {elapsed:.2f}s")
+                
+                return (name, data, elapsed)
             except Exception as e:
                 elapsed = time.time() - start
-                logger.error(f"❌ {name}: failed ({elapsed:.2f}s) - {e}")
+                logger.error(f"❌ {name}: {e}")
                 return (name, {"source": name, "error": str(e)}, elapsed)
         
-        # Call all sources concurrently
+        # Concurrent fetch
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(call_source, name): name for name in self.sources}
+            futures = {executor.submit(fetch, name): name for name in SOURCES}
             
             for future in as_completed(futures):
                 name, data, elapsed = future.result()
-                data["response_time"] = elapsed
                 results.append(data)
         
-        # Get the best result (first with valid data)
-        valid_results = [r for r in results if r.get("temperature") is not None]
+        # Get first valid result (priority order)
+        valid = [r for r in results if r.get("temperature") is not None]
         
-        if valid_results:
-            primary = valid_results[0]
-            # Add all sources to response
+        if valid:
+            primary = valid[0].copy()
             primary["all_sources"] = results
-            primary["sources_responded"] = [r["source"] for r in valid_results]
+            primary["sources_responded"] = [r["source"] for r in valid]
             primary["sources_failed"] = [r["source"] for r in results if r.get("error")]
-        else:
-            # No valid data from any source
-            primary = {
-                "error": "All sources failed",
-                "all_sources": results,
-                "timestamp": datetime.now().isoformat()
-            }
+            return primary
         
-        return primary
+        # All failed
+        return {
+            "error": "All sources failed",
+            "all_sources": results,
+            "timestamp": datetime.now().isoformat()
+        }
     
     def get_sources_status(self) -> List[Dict[str, Any]]:
-        """Get status of all sources (for health check)."""
-        # Test with default location
-        test_lat, test_lon = 6.244, -75.581
-        
+        """Check health of all sources."""
         status = []
-        for name in self.sources:
+        test_lat, test_lon = 6.244, -75.581  # Medellín
+        
+        for name in SOURCES:
             start = time.time()
             try:
-                result = self.sources[name](test_lat, test_lon)
+                result = get_source(name)(test_lat, test_lon)
                 elapsed = time.time() - start
                 
                 status.append({
                     "name": name,
-                    "status": "ok" if result.get("temperature") else "no_data",
+                    "available": result.get("temperature") is not None,
                     "response_time": elapsed,
                     "error": result.get("error")
                 })
             except Exception as e:
                 status.append({
                     "name": name,
-                    "status": "error",
+                    "available": False,
                     "response_time": time.time() - start,
                     "error": str(e)
                 })
         
         return status
     
+    def save_data(self, data: Dict[str, Any], source: str = "combined") -> None:
+        """Save data to CSV."""
+        import csv
+        from pathlib import Path
+        
+        data_dir = Path("data")
+        raw_dir = data_dir / "raw"
+        processed_dir = data_dir / "processed"
+        
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save to raw (per source)
+        if data.get("source"):
+            filepath = raw_dir / f"{data['source']}.csv"
+            self._append_csv(filepath, data)
+        
+        # Save merged
+        if source == "combined" and data.get("temperature") is not None:
+            filepath = processed_dir / "weather.csv"
+            self._append_csv(filepath, data)
+    
+    def _append_csv(self, filepath: Path, data: Dict[str, Any]) -> None:
+        """Append data to CSV."""
+        import os
+        
+        fieldnames = ["timestamp", "temperature", "humidity", "precipitation", "wind_speed", "source"]
+        write_header = not os.path.exists(filepath)
+        
+        with open(filepath, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({
+                "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                "temperature": data.get("temperature"),
+                "humidity": data.get("humidity"),
+                "precipitation": data.get("precipitation"),
+                "wind_speed": data.get("wind_speed"),
+                "source": data.get("source", "unknown")
+            })
+    
     def clear_cache(self) -> None:
         """Clear the cache."""
-        self._cache.clear()
+        self.cache.clear()
         logger.info("📦 Cache cleared")
 
 
-# Global service instance
-weather_service = WeatherService()
+# ====================
+# Global Service Instance
+# ====================
+
+_service: Optional[WeatherService] = None
 
 
-def get_weather_service() -> WeatherService:
-    """Get the global weather service instance."""
-    return weather_service
+def get_service() -> WeatherService:
+    """Get global weather service."""
+    global _service
+    if _service is None:
+        _service = WeatherService()
+    return _service

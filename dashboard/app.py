@@ -1,47 +1,65 @@
 """
-Streamlit Dashboard - Clean, non-blocking, with map.
+Streamlit Dashboard
+Uses weather_service (single source of truth), no duplicate logic.
+Non-blocking with caching.
 """
+import os
+import sys
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
-import requests
 from datetime import datetime
 
-# Configuration
-API_URL = "http://localhost:8000"
-st.set_page_config(page_title="ClimAPI Dashboard", page_icon="🌤️", layout="wide")
+# Make sure backend package is importable when running from dashboard folder
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
-# Cache decorator for API calls
+# Import backend service directly (no HTTP calls)
+from backend.weather_service import get_service
+
+# Get service instance
+service = get_service()
+
+# ====================
+# Cached Service Calls
+# ====================
+
 @st.cache_data(ttl=300)
 def fetch_weather(lat: float, lon: float, source: str = None):
-    """Fetch weather data from API with caching."""
+    """Fetch weather - cached."""
     try:
-        params = {"lat": lat, "lon": lon, "timezone": "America/Bogota"}
-        if source:
-            params["source"] = source
-            
-        response = requests.get(f"{API_URL}/weather/current", params=params, timeout=10)
-        response.raise_for_status()
-        return response.json()
+        result = service.get_weather(lat=lat, lon=lon, source=source, use_cache=True)
+        return {"data": result}
     except Exception as e:
         return {"error": str(e)}
 
 
 @st.cache_data(ttl=60)
 def fetch_sources():
-    """Fetch available sources."""
+    """Fetch sources status - cached."""
     try:
-        response = requests.get(f"{API_URL}/sources", timeout=5)
-        return response.json().get("sources", [])
+        status = service.get_sources_status()
+        return [
+            {
+                "name": s["name"],
+                "available": s["available"],
+                "response_time": round(s["response_time"], 3)
+            }
+            for s in status
+        ]
     except:
-        return [{"name": "open-meteo", "status": "unknown"}]
+        return []
 
+
+# ====================
+# Dashboard Pages
+# ====================
 
 def show_dashboard():
-    """Main dashboard view."""
+    """Main dashboard."""
     st.title("🌤️ ClimAPI Weather Dashboard")
     st.markdown("---")
     
@@ -59,8 +77,8 @@ def show_dashboard():
     city = st.sidebar.selectbox("City", list(presets.keys()))
     
     if city == "Custom":
-        lat = st.sidebar.number_input("Latitude", value=6.244, step=0.01)
-        lon = st.sidebar.number_input("Longitude", value=-75.581, step=0.01)
+        lat = st.sidebar.number_input("Latitude", value=6.244, step=0.01, format="%.4f")
+        lon = st.sidebar.number_input("Longitude", value=-75.581, step=0.01, format="%.4f")
     else:
         lat, lon = presets[city]
     
@@ -68,58 +86,44 @@ def show_dashboard():
     st.sidebar.header("🌐 Sources")
     sources = fetch_sources()
     source_names = [s["name"] for s in sources]
-    source_status = {s["name"]: s.get("status", "unknown") for s in sources}
     
     selected_source = st.sidebar.selectbox(
-        "Weather Source",
-        ["All"] + source_names,
-        format_func=lambda x: f"{x} ({source_status.get(x, '?')})" if x != "All" else x
+        "Source",
+        ["All"] + source_names
     )
     
     source_param = None if selected_source == "All" else selected_source
     
     # Refresh button
-    if st.sidebar.button("🔄 Refresh", type="primary"):
+    if st.sidebar.button("🔄 Refresh"):
         st.cache_data.clear()
         fetch_weather.clear()
     
     # Fetch data
-    with st.spinner("Fetching weather data..."):
+    with st.spinner("Fetching weather..."):
         weather = fetch_weather(lat, lon, source_param)
     
     if "error" in weather:
         st.error(f"Error: {weather['error']}")
-        st.info("Make sure the API is running: `python main.py`")
+        st.info("Make sure API is running: python main.py")
         return
     
     data = weather.get("data", {})
     
-    # Show sources info
-    if "sources_responded" in data:
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### 📡 Source Status")
-        for src in data.get("sources_responded", []):
-            st.sidebar.success(f"✅ {src}")
-        for src in data.get("sources_failed", []):
-            st.sidebar.warning(f"❌ {src}")
-    
-    # Current weather cards
+    # Display metrics
     st.markdown("### 🌡️ Current Weather")
     
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric("Temperature", f"{data.get('temperature', 'N/A')}°C" if data.get("temperature") else "N/A")
     with col2:
         st.metric("Humidity", f"{data.get('humidity', 'N/A')}%" if data.get("humidity") else "N/A")
     with col3:
-        st.metric("Precipitation", f"{data.get('precipitation', 'N/A')} mm" if data.get("precipitation") else "N/A")
+        st.metric("Precipitation", f"{data.get('precipitation', 'N/A')} mm" if data.get("precipitation") else "0 mm")
     with col4:
-        wind = data.get("wind_speed", 0)
-        st.metric("Wind", f"{wind:.1f} km/h" if wind else "N/A")
+        st.metric("Wind", f"{data.get('wind_speed', 'N/A')} km/h" if data.get("wind_speed") else "N/A")
     
-    # Source info
-    st.caption(f"Data source: {data.get('source', 'unknown')}")
+    st.caption(f"Source: {data.get('source', 'unknown')}")
     
     # Map
     st.markdown("---")
@@ -131,39 +135,52 @@ def show_dashboard():
         m = folium.Map(location=[lat, lon], zoom_start=10)
         folium.Marker(
             [lat, lon],
-            popup=f"{city}: {lat}, {lon}",
+            popup=f"<b>{city}</b><br>{lat}, {lon}",
             icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(m)
-        st_folium(m, width=500, height=350)
+        st_folium(m, width=600, height=400)
     
     with col_info:
-        st.markdown("#### Location Details")
+        st.markdown("#### Details")
         st.write(f"**City:** {city}")
-        st.write(f"**Latitude:** {lat}")
-        st.write(f"**Longitude:** {lon}")
-        st.write(f"**Timezone:** America/Bogota")
-        if data.get("timestamp"):
-            st.write(f"**Updated:** {data['timestamp'][:19]}")
+        st.write(f"**Lat:** {lat}")
+        st.write(f"**Lon:** {lon}")
+    
+    # Show all sources if available
+    if data.get("all_sources"):
+        st.markdown("---")
+        st.markdown("### 📊 All Sources")
+        
+        rows = []
+        for src in data["all_sources"]:
+            rows.append({
+                "Source": src.get("source", "?"),
+                "Temperature": f"{src.get('temperature', 'N/A')}°C" if src.get("temperature") else "N/A",
+                "Humidity": f"{src.get('humidity', 'N/A')}%" if src.get("humidity") else "N/A",
+                "Wind": f"{src.get('wind_speed', 'N/A')} km/h" if src.get("wind_speed") else "N/A",
+                "Status": "✅" if src.get("temperature") else "❌"
+            })
+        
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
 
-def show_sources_page():
+def show_sources():
     """Sources status page."""
-    st.title("📡 Weather Sources Status")
+    st.title("📡 Weather Sources")
     st.markdown("---")
     
     sources = fetch_sources()
     
     for src in sources:
-        status = src.get("status", "unknown")
-        color = "🟢" if status == "ok" else "🟡" if status == "no_data" else "🔴"
+        status = "🟢 Available" if src.get("available") else "🔴 Unavailable"
         
-        with st.expander(f"{color} {src['name']}"):
-            st.write(f"**Status:** {status}")
-            st.write(f"**Response Time:** {src.get('response_time', 'N/A'):.2f}s" if isinstance(src.get("response_time"), float) else "N/A")
+        with st.expander(f"{src['name']} - {status}"):
+            st.write(f"**Available:** {src['available']}")
+            st.write(f"**Response Time:** {src.get('response_time', 'N/A'):.3f}s")
 
 
 def main():
-    """Main entry point."""
+    """Main entry."""
     st.sidebar.title("🧭 Navigation")
     
     page = st.sidebar.radio("Go to:", ["Dashboard", "Sources"])
@@ -171,7 +188,7 @@ def main():
     if page == "Dashboard":
         show_dashboard()
     else:
-        show_sources_page()
+        show_sources()
 
 
 if __name__ == "__main__":
