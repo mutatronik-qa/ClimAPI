@@ -12,6 +12,11 @@ import json
 
 from data_sources.open_meteo import get_weather_data
 from data_sources.openweathermap import OpenWeatherMap
+
+
+def _safe_timestamp() -> str:
+    """Devuelve un timestamp seguro para usar en nombres de archivo."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
 from processing.data_normalizer import DataNormalizer
 from processing.data_quality_report import DataQualityReport
 
@@ -59,7 +64,7 @@ class APIDataExtractor:
             raw_response = get_weather_data(lat, lon, timezone)
             
             # Guardar respuesta raw
-            raw_file = self.dirs["open-meteo"] / f"raw_{datetime.now().isoformat()}.json"
+            raw_file = self.dirs["open-meteo"] / f"raw_{_safe_timestamp()}.json"
             with open(raw_file, 'w') as f:
                 json.dump(raw_response, f, indent=2, default=str)
             logger.info(f"   ✓ Datos raw guardados en: {raw_file}")
@@ -124,7 +129,7 @@ class APIDataExtractor:
             raw_response = owm_client.get_weather_data(city)
             
             # Guardar respuesta raw
-            raw_file = self.dirs["openweathermap"] / f"raw_{city}_{datetime.now().isoformat()}.json"
+            raw_file = self.dirs["openweathermap"] / f"raw_{city}_{_safe_timestamp()}.json"
             with open(raw_file, 'w') as f:
                 json.dump(raw_response, f, indent=2, default=str)
             logger.info(f"   ✓ Datos raw guardados en: {raw_file}")

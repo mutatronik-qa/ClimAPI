@@ -12,7 +12,7 @@ class OpenWeatherMap:
     def __init__(self, config: Dict[str, Any]):
         self.config = config or {}
         self.api_key = self.config.get("api_key")
-        self.base_url = self.config.get("base_url", "http://api.openweathermap.org/data/2.5/")
+        self.base_url = self.config.get("base_url", "https://api.openweathermap.org/data/2.5/")
         self.units = self.config.get("units", "metric")
 
     def get_weather_data(self, location: str) -> Dict[str, Any]:

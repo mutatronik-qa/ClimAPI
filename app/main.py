@@ -1,7 +1,7 @@
 """
 Backend FastAPI para Clima Dashboard
 
-Este script:
+Este módulo:
 1. Configura la API FastAPI con CORS
 2. Define los endpoints para datos meteorológicos
 3. Integra múltiples fuentes de datos
@@ -21,13 +21,14 @@ from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
 
-# Importar configuración local
-from app.config import settings
+# Importar configuración
+from .config import settings
 
-# Agregar el directorio raíz al path para importar módulos existentes
-sys.path.append(str(Path(__file__).parent.parent.parent))
+# Agregar el directorio raíz al path
+root_path = Path(__file__).parent.parent
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
 
 from data_sources.open_meteo import get_weather_data, validate_coordinates
 from processing.transform import process_weather_data
@@ -185,25 +186,3 @@ async def get_default_location():
         "country": "Colombia"
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    
-    print("=" * 60)
-    print("🚀 Clima Dashboard Backend - FastAPI")
-    print("=" * 60)
-    print(f"🌐 Servidor iniciado en: http://{settings.HOST}:{settings.PORT}")
-    print(f"📖 Documentación Swagger: http://{settings.HOST}:{settings.PORT}/docs")
-    print(f"📖 Documentación ReDoc: http://{settings.HOST}:{settings.PORT}/redoc")
-    print(f"🔍 Health Check: http://{settings.HOST}:{settings.PORT}/api/v1/health")
-    print(f"💾 Caché TTL: {settings.CACHE_TTL_MINUTES} minutos")
-    print(f"📊 Modo {'desarrollo' if settings.DEBUG else 'producción'}")
-    print("=" * 60)
-    
-    # Iniciar servidor
-    uvicorn.run(
-        "main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-        log_level="info"
-    )

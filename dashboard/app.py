@@ -8,6 +8,9 @@ temperatura, humedad, precipitación y velocidad del viento.
 from pathlib import Path
 import sys
 import glob
+import folium
+from streamlit_folium import st_folium
+import json
 
 # Añadir la raíz del proyecto al PYTHONPATH para poder importar módulos sibling
 PROJECT_ROOT = Path(__file__).resolve().parents[1]  # e:\GIT\ClimAPI
@@ -21,6 +24,9 @@ import plotly.express as px
 import requests
 from processing.data_processor import DataProcessor
 from processing.storage import load_from_csv
+from data_sources.radar_ideam import RadarIDEAMClient
+from data_sources.siata import SIATAClient
+from config.settings import settings
 
 
 def load_data(filepath: str = "data/weather_data.csv") -> pd.DataFrame:
@@ -446,6 +452,176 @@ def main():
     st.sidebar.info("📖 Dashboard Meteorológico v1.0")
 
 
-if __name__ == "__main__":
-    main()
+def show_map_page():
+    """Página del mapa con radares y GeoJSON."""
+    st.title("🗺️ Mapa Meteorológico - Radares IDEAM")
+
+    # Crear mapa centrado en Medellín
+    m = folium.Map(location=[6.244, -75.581], zoom_start=10)
+
+    # Agregar capa GeoJSON (ejemplo: límites de Medellín)
+    try:
+        # Aquí puedes cargar un GeoJSON real
+        geojson_url = "https://raw.githubusercontent.com/johan/world.geo.json/master/countries/COL.geo.json"
+        folium.GeoJson(geojson_url, name="Colombia").add_to(m)
+    except:
+        pass
+
+    # Agregar marcadores para radares IDEAM
+    radar_client = RadarIDEAMClient({
+        "bucket": settings.IDEAM_RADAR_BUCKET,
+        "region": settings.IDEAM_RADAR_REGION
+    })
+
+    try:
+        # Obtener último scan de radar
+        radar_data = radar_client.get_latest_scan()
+        if radar_data:
+            folium.Marker(
+                [6.244, -75.581],
+                popup="Radar IDEAM - Medellín",
+                icon=folium.Icon(color='red', icon='cloud')
+            ).add_to(m)
+    except Exception as e:
+        st.warning(f"No se pudo cargar datos de radar: {e}")
+
+    # Mostrar mapa
+    st_folium(m, width=700, height=500)
+
+    # Información adicional
+    st.markdown("### 📊 Información del Radar")
+    st.info("Los radares IDEAM muestran precipitación en tiempo real sobre el Valle de Aburrá.")
+
+
+def show_config_page():
+    """Página de configuración de API keys."""
+    st.title("⚙️ Configuración de APIs")
+
+    st.markdown("### 🔑 API Keys y Credenciales")
+
+    # OpenWeatherMap
+    st.subheader("🌤️ OpenWeatherMap")
+    owm_key = st.text_input(
+        "API Key",
+        value=settings.OPENWEATHER_API_KEY or "",
+        type="password",
+        help="Obtén tu API key en https://openweathermap.org/api"
+    )
+
+    # MeteoBlue
+    st.subheader("🔵 MeteoBlue")
+    mb_key = st.text_input(
+        "API Key",
+        value=settings.METEOBLUE_API_KEY or "",
+        type="password"
+    )
+    mb_secret = st.text_input(
+        "Shared Secret",
+        value=settings.METEOBLUE_SHARED_SECRET or "",
+        type="password"
+    )
+
+    # SIATA
+    st.subheader("🏛️ SIATA")
+    siata_url = st.text_input(
+        "URL API",
+        value=settings.SIATA_API_URL
+    )
+    siata_operacional = st.text_input(
+        "URL Operacional",
+        value=settings.SIATA_OPERACIONAL_URL
+    )
+
+    # Botón guardar
+    if st.button("💾 Guardar Configuración"):
+        # Aquí guardar en .env o settings
+        st.success("✅ Configuración guardada (implementar lógica de guardado)")
+
+    st.markdown("---")
+    st.info("🔒 Las credenciales se almacenan localmente en .env")
+
+
+def main():
+    """Función principal del dashboard con navegación por páginas."""
+    st.set_page_config(
+        page_title="ClimAPI Dashboard",
+        page_icon="🌤️",
+        layout="wide"
+    )
+
+    # Navegación por sidebar
+    st.sidebar.title("🧭 Navegación")
+    page = st.sidebar.radio(
+        "Selecciona página:",
+        ["📊 Dashboard", "🗺️ Mapa", "⚙️ Configuración"]
+    )
+
+    if page == "📊 Dashboard":
+        show_dashboard_page()
+    elif page == "🗺️ Mapa":
+        show_map_page()
+    elif page == "⚙️ Configuración":
+        show_config_page()
+
+
+def show_dashboard_page():
+    """Página principal del dashboard (código original)."""
+    st.title("🌤️ Dashboard Meteorológico ClimAPI")
+
+    # Cargar datos principales
+    df = load_data()
+
+    # Sidebar con opciones
+    st.sidebar.markdown("### 🔧 Opciones de Datos")
+    include_mb = st.sidebar.checkbox("🔗 Incluir MeteoBlue (backend)", value=False)
+    include_owm = st.sidebar.checkbox("🔗 Incluir OpenWeatherMap (CSV)", value=False)
+    include_radar = st.sidebar.checkbox("🔗 Incluir RADAR IDEAM (CSV)", value=False)
+
+    # Cargar CSVs adicionales si existen
+    if include_owm:
+        df_owm = _load_api_csv_as_standard("data/openweathermap.csv")
+        if not df_owm.empty:
+            df = pd.concat([df, df_owm], axis=0, ignore_index=False).sort_index()
+            st.sidebar.success("✓ OpenWeatherMap agregado")
+    
+    if include_radar:
+        df_radar = _load_api_csv_as_standard("data/radar_ideam.csv")
+        if not df_radar.empty:
+            df = pd.concat([df, df_radar], axis=0, ignore_index=False).sort_index()
+            st.sidebar.success("✓ RADAR IDEAM agregado")
+
+    if df.empty:
+        st.error("❌ No hay datos disponibles. Ejecuta main.py para obtener datos.")
+        st.stop()
+
+    # Información general en el sidebar
+    st.sidebar.markdown("### 📊 Información General")
+    st.sidebar.metric("Total de registros", len(df))
+    st.sidebar.metric(
+        "Rango de fechas",
+        f"{df.index.min().strftime('%Y-%m-%d')} a {df.index.max().strftime('%Y-%d-%m')}"
+    )
+    
+    # Estadísticas básicas
+    if 'temperatura_c' in df.columns:
+        st.sidebar.metric("🌡️ Temp. Promedio", f"{df['temperatura_c'].mean():.1f} °C")
+        st.sidebar.metric("🌡️ Temp. Máxima", f"{df['temperatura_c'].max():.1f} °C")
+        st.sidebar.metric("🌡️ Temp. Mínima", f"{df['temperatura_c'].min():.1f} °C")
+    
+    # Selector de rango de fechas
+    st.sidebar.markdown("### 📅 Filtro de Fechas")
+    min_date = df.index.min().date()
+    max_date = df.index.max().date()
+    
+    date_range = st.sidebar.date_input(
+        "Selecciona el rango de fechas",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    # Validar que se seleccionaron dos fechas
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
 

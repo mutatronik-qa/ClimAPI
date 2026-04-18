@@ -112,6 +112,37 @@ run_tests.bat
 bash run_tests.sh
 ```
 
-## 📄 Licencia
+## � Cambios Recientes
+
+### v1.0.1 - Abril 2026
+
+#### ✅ Integración SIATA
+- **Agregado**: Soporte completo para cliente SIATA (Sistema de Alerta Temprana de Medellín)
+- **Configuración**: URL operativa `https://www.siata.gov.co/operacional/`
+- **Uso**: Cliente SIATA ahora disponible en `main.py` y endpoints API
+
+#### ✅ Corrección Radar IDEAM
+- **Arreglado**: Error `boto3.UNSIGNED` → `botocore.UNSIGNED`
+- **Compatibilidad**: Acceso público a bucket S3 de IDEAM funcionando correctamente
+
+#### ✅ Seguridad y Configuración
+- **Agregado**: Archivo `.gitignore` para proteger `.env` y archivos sensibles
+- **Migrado**: Pydantic v1 → v2 (`pydantic_settings.BaseSettings`)
+- **Corregido**: Parsing de `ALLOWED_ORIGINS` en `.env` (lista separada por comas)
+- **Centralizado**: API keys ahora usan configuración centralizada en lugar de `os.getenv()`
+
+#### ✅ Compatibilidad Windows
+- **Agregado**: Función `_safe_timestamp()` para nombres de archivo válidos en Windows
+- **Arreglado**: Error `[Errno 22] Invalid argument` al guardar archivos JSON
+
+#### ✅ OpenWeatherMap HTTPS
+- **Actualizado**: URL base cambiada de `http://` a `https://` (requerido por API)
+- **Seguridad**: Todas las llamadas API ahora usan HTTPS
+
+#### ✅ Dependencias Actualizadas
+- **Instaladas**: `pydantic-settings`, `beautifulsoup4`, `diskcache`, `pandas`, `nbformat`, `python-json-logger`
+- **Compatibilidad**: Soporte para scraping opcional y logging estructurado
+
+## �📄 Licencia
 
 Código abierto para uso educativo y personal.

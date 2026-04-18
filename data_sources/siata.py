@@ -11,7 +11,6 @@ Métodos de acceso:
 """
 
 import requests
-from bs4 import BeautifulSoup
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
@@ -19,6 +18,16 @@ import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Importar BeautifulSoup opcionalmente
+try:
+    from bs4 import BeautifulSoup
+    HAS_BEAUTIFULSOUP = True
+except ImportError:
+    HAS_BEAUTIFULSOUP = False
+    BeautifulSoup = None
+    logger.warning("beautifulsoup4 no está instalado. Algunas funciones no estarán disponibles.")
+
 
 
 class SIATAClient:
@@ -79,12 +88,15 @@ class SIATAClient:
                 logger.info(f"✓ Datos obtenidos desde API SIATA")
                 return weather_data
             
-            # Fallback: web scraping
-            logger.debug("API no disponible. Intentando web scraping...")
-            weather_data = self._scrape_weather_data()
-            if weather_data:
-                logger.info(f"✓ Datos obtenidos por web scraping")
-                return weather_data
+            # Fallback: web scraping (solo si BeautifulSoup está disponible)
+            if HAS_BEAUTIFULSOUP:
+                logger.debug("API no disponible. Intentando web scraping...")
+                weather_data = self._scrape_weather_data()
+                if weather_data:
+                    logger.info(f"✓ Datos obtenidos por web scraping")
+                    return weather_data
+            else:
+                logger.warning("BeautifulSoup no está instalado. Web scraping no disponible.")
             
             logger.warning(f"No se pudieron obtener datos SIATA para {location}")
             return None

@@ -157,7 +157,7 @@ class Settings(BaseSettings):
     # ============================================
     
     OPENWEATHER_API_KEY: Optional[str] = Field(None, description="API Key de OpenWeatherMap")
-    OPENWEATHER_BASE_URL: str = "http://api.openweathermap.org/data/2.5/"
+    OPENWEATHER_BASE_URL: str = "https://api.openweathermap.org/data/2.5/"
     OPENWEATHER_UNITS: str = "metric"
     OPENWEATHER_TIMEOUT: int = 15
     

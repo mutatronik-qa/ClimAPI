@@ -115,10 +115,10 @@ METEOBLUE_CFG = {
 meteoblue_client = MeteoBlueService(METEOBLUE_CFG)
 
 OWM_CFG = {
-    "api_key": os.getenv("OPENWEATHER_API_KEY"),
-    "base_url": os.getenv("OPENWEATHER_BASE_URL", "http://api.openweathermap.org/data/2.5/"),
-    "units": os.getenv("OPENWEATHER_UNITS", "metric"),
-    "ttl_seconds": int(os.getenv("CACHE_TTL_MINUTES", "15")) * 60
+    "api_key": settings.OPENWEATHER_API_KEY,
+    "base_url": settings.OPENWEATHER_BASE_URL,
+    "units": settings.OPENWEATHER_UNITS,
+    "ttl_seconds": settings.CACHE_CONFIG.current_weather * 60
 }
 owm_client = OpenWeatherMap(OWM_CFG)
 
@@ -351,7 +351,7 @@ def main():
         lat=latitude,
         lon=longitude,
         city=city,
-        owm_api_key=os.getenv("OPENWEATHER_API_KEY")
+        owm_api_key=settings.OPENWEATHER_API_KEY
     )
     
     # Mostrar resumen de extracción
