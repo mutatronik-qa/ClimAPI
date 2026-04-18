@@ -27,6 +27,7 @@ from processing.storage import load_from_csv
 from data_sources.radar_ideam import RadarIDEAMClient
 from data_sources.siata import SIATAClient
 from config.settings import settings
+from scripts.ipynb_analyzer import analyze_notebooks, find_notebooks
 
 
 def load_data(filepath: str = "data/weather_data.csv") -> pd.DataFrame:
@@ -541,6 +542,99 @@ def show_config_page():
     st.info("🔒 Las credenciales se almacenan localmente en .env")
 
 
+def show_notebooks_page():
+    """Página de análisis de notebooks."""
+    st.title("📓 Análisis de Notebooks")
+
+    st.markdown("""
+    Esta página analiza los notebooks Jupyter (.ipynb) en el proyecto para:
+    - Extraer URLs de datos
+    - Descargar CSVs automáticamente
+    - Clasificar datasets como realtime/historical
+    - Mostrar estadísticas de los notebooks
+    """)
+
+    # Botón para ejecutar análisis
+    if st.button("🔍 Analizar Notebooks", type="primary"):
+        with st.spinner("Analizando notebooks..."):
+            try:
+                # Ejecutar análisis
+                results = analyze_notebooks(folder=".", execute_safe=True)
+                
+                if results:
+                    st.success(f"✅ Análisis completado. {len(results)} notebooks procesados.")
+                    
+                    # Mostrar resultados por notebook
+                    for result in results:
+                        with st.expander(f"📄 {result['notebook_name']}", expanded=True):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.metric("URLs encontradas", len(result.get('urls', [])))
+                                st.metric("Datasets exportados", len(result.get('exported', [])))
+                            
+                            with col2:
+                                st.metric("Celdas de código", result.get('code_cells', 0))
+                                st.metric("Tamaño (KB)", f"{result.get('size_kb', 0):.1f}")
+                            
+                            # URLs encontradas
+                            if result.get('urls'):
+                                st.subheader("🔗 URLs detectadas")
+                                for url in result['urls'][:5]:  # Mostrar primeras 5
+                                    st.code(url, language=None)
+                                if len(result['urls']) > 5:
+                                    st.info(f"Y {len(result['urls']) - 5} más...")
+                            
+                            # Datasets exportados
+                            if result.get('exported'):
+                                st.subheader("📊 Datasets exportados")
+                                for exported in result['exported']:
+                                    st.success(f"✓ {exported}")
+                    
+                    # Resumen general
+                    st.markdown("---")
+                    st.subheader("📈 Resumen General")
+                    
+                    total_urls = sum(len(r.get('urls', [])) for r in results)
+                    total_exported = sum(len(r.get('exported', [])) for r in results)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Notebooks", len(results))
+                    with col2:
+                        st.metric("URLs Totales", total_urls)
+                    with col3:
+                        st.metric("Datasets Exportados", total_exported)
+                        
+                else:
+                    st.warning("⚠️ No se encontraron notebooks para analizar.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error durante el análisis: {e}")
+                st.exception(e)
+
+    # Información adicional
+    st.markdown("---")
+    st.subheader("ℹ️ Información")
+    st.info("""
+    **¿Qué hace el análisis?**
+    - Busca archivos .ipynb en todo el proyecto
+    - Extrae URLs de pd.read_csv() y pd.DataFrame()
+    - Descarga CSVs de forma segura
+    - Clasifica datos por timestamp (realtime/historical)
+    - Exporta a data/ con prefijos correspondientes
+    """)
+
+    # Lista de notebooks encontrados
+    st.subheader("📂 Notebooks en el proyecto")
+    notebooks = find_notebooks(".")
+    if notebooks:
+        for nb in notebooks:
+            st.code(str(nb), language=None)
+    else:
+        st.info("No se encontraron notebooks .ipynb")
+
+
 def main():
     """Función principal del dashboard con navegación por páginas."""
     st.set_page_config(
@@ -553,13 +647,15 @@ def main():
     st.sidebar.title("🧭 Navegación")
     page = st.sidebar.radio(
         "Selecciona página:",
-        ["📊 Dashboard", "🗺️ Mapa", "⚙️ Configuración"]
+        ["📊 Dashboard", "🗺️ Mapa", "📓 Notebooks", "⚙️ Configuración"]
     )
 
     if page == "📊 Dashboard":
         show_dashboard_page()
     elif page == "🗺️ Mapa":
         show_map_page()
+    elif page == "📓 Notebooks":
+        show_notebooks_page()
     elif page == "⚙️ Configuración":
         show_config_page()
 
@@ -624,4 +720,60 @@ def show_dashboard_page():
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
     else:
+        # Usar rango completo si no se seleccionó correctamente
+        start_date, end_date = min_date, max_date
+        st.warning("Selecciona un rango de fechas válido. Usando rango completo.")
+    
+    # Filtrar datos por rango de fechas
+    df_filtered = df.loc[start_date:end_date]
+    
+    # Crear gráficos
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("🌡️ Temperatura")
+        if 'temperatura_c' in df_filtered.columns:
+            fig_temp = create_temperature_chart(df_filtered, (start_date, end_date))
+            st.plotly_chart(fig_temp, use_container_width=True)
+        else:
+            st.info("No hay datos de temperatura disponibles")
+    
+    with col2:
+        st.subheader("💧 Humedad")
+        if 'humedad_porcentaje' in df_filtered.columns:
+            fig_hum = create_humidity_chart(df_filtered, (start_date, end_date))
+            st.plotly_chart(fig_hum, use_container_width=True)
+        else:
+            st.info("No hay datos de humedad disponibles")
+    
+    # Más gráficos...
+    st.subheader("🌧️ Precipitación y 💨 Viento")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        if 'precipitacion_mm' in df_filtered.columns:
+            fig_precip = create_precipitation_chart(df_filtered, (start_date, end_date))
+            st.plotly_chart(fig_precip, use_container_width=True)
+        else:
+            st.info("No hay datos de precipitación disponibles")
+    
+    with col4:
+        if 'velocidad_viento_kmh' in df_filtered.columns:
+            fig_wind = create_wind_speed_chart(df_filtered, (start_date, end_date))
+            st.plotly_chart(fig_wind, use_container_width=True)
+        else:
+            st.info("No hay datos de velocidad del viento disponibles")
+    
+    # Tabla de datos
+    st.subheader("📊 Datos Detallados")
+    st.dataframe(df_filtered.head(100))
+    
+    # Descarga CSV
+    csv = df_filtered.to_csv(index=True)
+    st.download_button(
+        label="📥 Descargar datos filtrados (CSV)",
+        data=csv,
+        file_name=f"weather_data_{start_date.date()}_{end_date.date()}.csv",
+        mime="text/csv"
+    )
 

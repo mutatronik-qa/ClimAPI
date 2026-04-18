@@ -266,3 +266,71 @@ class SIATAClient:
         except Exception as e:
             logger.error(f"Error obteniendo calidad del aire: {e}")
             return None
+    
+    def get_historical_weather(self, days: int = 7, station: str = "medellin") -> Optional[List[Dict[str, Any]]]:
+        """
+        Obtiene datos históricos por web scraping.
+        
+        Args:
+            days: Número de días históricos a obtener
+            station: Estación meteorológica
+            
+        Returns:
+            Lista de diccionarios con datos históricos
+        """
+        if not HAS_BEAUTIFULSOUP:
+            logger.warning("BeautifulSoup no disponible para scraping histórico")
+            return None
+            
+        try:
+            logger.info(f"Obteniendo datos históricos SIATA ({days} días, estación: {station})...")
+            
+            # URL de datos históricos (ejemplo - ajustar según sitio real)
+            historical_url = f"{self.operacional_url}historicos/{station}"
+            
+            response = self.session.get(historical_url, timeout=self.timeout)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Buscar tabla de datos históricos
+            table = soup.find('table', {'class': re.compile('historico|weather-table', re.IGNORECASE)})
+            
+            if not table:
+                logger.warning("No se encontró tabla de datos históricos")
+                return None
+                
+            # Extraer datos de la tabla
+            historical_data = []
+            rows = table.find_all('tr')[1:]  # Saltar header
+            
+            for row in rows[:days]:  # Limitar a los días solicitados
+                cols = row.find_all('td')
+                if len(cols) >= 5:  # fecha, temp, humedad, precip, viento
+                    try:
+                        record = {
+                            "timestamp": cols[0].get_text(strip=True),
+                            "temperature": float(re.search(r'(\d+\.?\d*)', cols[1].get_text()).group(1)),
+                            "humidity": float(re.search(r'(\d+\.?\d*)', cols[2].get_text()).group(1)),
+                            "precipitation": float(re.search(r'(\d+\.?\d*)', cols[3].get_text()).group(1)),
+                            "wind_speed": float(re.search(r'(\d+\.?\d*)', cols[4].get_text()).group(1)),
+                            "source": "siata_historical_scrape"
+                        }
+                        historical_data.append(record)
+                    except (ValueError, AttributeError, IndexError) as e:
+                        logger.debug(f"Error parseando fila histórica: {e}")
+                        continue
+            
+            if historical_data:
+                logger.info(f"✓ Obtenidos {len(historical_data)} registros históricos")
+                return historical_data
+                
+            logger.warning("No se pudieron extraer datos históricos")
+            return None
+            
+        except requests.RequestException as e:
+            logger.error(f"Error de conexión en scraping histórico: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error en scraping histórico: {e}", exc_info=True)
+            return None

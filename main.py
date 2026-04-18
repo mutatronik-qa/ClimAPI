@@ -50,7 +50,7 @@ from config.settings import settings
 from data_sources.siata import SIATAClient
 from data_sources.radar_ideam import RadarIDEAMClient
 
-# Configuración de logging
+# Configuración de logging, Para debug serio en producción.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'

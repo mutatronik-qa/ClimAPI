@@ -163,12 +163,13 @@ class Settings(BaseSettings):
     
     # ============================================
     # METEOBLUE
+    # https://my.meteoblue.com/packages/basic-15min_basic-3h_current_clouds-1h_sunmoon_moonlight-30min?apikey=igGRprBlUxkD89MK&lat=6.245&lon=-75.5715&asl=1405&format=json
     # ============================================
     
     METEOBLUE_API_KEY: Optional[str] = Field(None, description="API Key de Meteoblue")
     METEOBLUE_BASE_URL: str = "https://my.meteoblue.com"
     METEOBLUE_SHARED_SECRET: Optional[str] = Field(None, description="Shared Secret Meteoblue")
-    METEOBLUE_ENDPOINT: str = "/packages/basic-1h"
+    METEOBLUE_ENDPOINT: str = "basic-15min_basic-3h_current_clouds-1h_sunmoon_moonlight-30min"
     METEOBLUE_FORECAST_DAYS: int = 7
     METEOBLUE_TIMEOUT: int = 20
     

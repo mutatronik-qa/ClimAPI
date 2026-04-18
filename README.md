@@ -10,14 +10,19 @@ ClimAPI consume datos de la API gratuita Open-Meteo y los visualiza en un dashbo
 
 ```
 ClimAPI/
-├── data_sources/     # Consumo de APIs meteorológicas
-├── processing/    # Transformación y almacenamiento
+├── api/           # Endpoints FastAPI
+├── app/           # Configuración y servicios de la aplicación
+├── data_sources/  # Consumo de APIs meteorológicas
+├── processing/    # Transformación y almacenamiento de datos
 ├── dashboard/     # Dashboard Streamlit
-├── config/       # Configuración
-├── data/         # Datos CSV (generado automáticamente)
-├── cache/        # Caché (generado automáticamente)
-├── main.py       # Script principal
-└── README.md
+├── config/        # Configuración centralizada
+├── data/          # Datos CSV generados
+├── notebooks/     # Jupyter notebooks de análisis
+├── scripts/       # Scripts auxiliares
+├── tests/         # Pruebas pytest
+├── frontend/      # Frontend Next.js (opcional)
+├── README.md
+└── requirements.txt
 ```
 
 ## 🚀 Instalación
@@ -46,7 +51,11 @@ python main.py dashboard
 streamlit run dashboard/app.py
 ```
 
-Dashboard en `http://localhost:8501`.
+Dashboard en `http://localhost:8501` con 4 páginas:
+- **📊 Dashboard**: Gráficos y análisis de datos meteorológicos
+- **🗺️ Mapa**: Visualización de radares IDEAM con capas GeoJSON
+- **📓 Notebooks**: Análisis y extracción de datos desde notebooks Jupyter
+- **⚙️ Configuración**: Gestión de API keys y credenciales
 
 ### 3. API FastAPI (Opcional)
 
@@ -72,17 +81,44 @@ Ubicaciones disponibles: medellin, bello, envigado, bogota
 
 ## 🎯 Características Dashboard
 
+### 📊 Dashboard Principal
 - Gráficos interactivos (Plotly): Temperatura, Humedad, Precipitación, Viento
 - Filtros por rango de fechas
 - Estadísticas generales
 - Tabla de datos
 - Descarga CSV
+- Integración múltiple de APIs (Open-Meteo, OpenWeatherMap, MeteoBlue, RADAR IDEAM)
+
+### 🗺️ Mapa Meteorológico
+- Visualización de radares IDEAM en tiempo real
+- Capas GeoJSON para límites geográficos
+- Mapa interactivo centrado en Medellín
+- Información de precipitación por radar
+
+### ⚙️ Configuración de APIs
+- Interfaz para configurar API keys (OpenWeatherMap, MeteoBlue)
+- Gestión de URLs de servicios (SIATA, IDEAM)
+- Validación y guardado seguro de credenciales
+- Información de ayuda para obtener API keys
+
+### 📓 Análisis de Notebooks
+- Exploración automática de notebooks Jupyter (.ipynb)
+- Extracción de URLs y datasets desde código Python
+- Descarga segura de CSVs desde notebooks
+- Clasificación de datos realtime/historical
+- Estadísticas detalladas por notebook
 
 ## 📦 Dependencies
 
-- pandas, requests, streamlit, plotly
-- fastapi, uvicorn, pydantic
-- diskcache (caché)
+- fastapi, uvicorn, pydantic, pydantic-settings
+- pandas, numpy, requests, bs4
+- streamlit, plotly, folium, streamlit-folium
+- diskcache, nbformat
+- boto3, arm-pyart
+
+## 🛠️ Dependencias de desarrollo
+
+- pytest, pytest-asyncio, black, isort, mypy
 
 ## 🧪 Tests
 
@@ -139,9 +175,11 @@ bash run_tests.sh
 - **Actualizado**: URL base cambiada de `http://` a `https://` (requerido por API)
 - **Seguridad**: Todas las llamadas API ahora usan HTTPS
 
-#### ✅ Dependencias Actualizadas
-- **Instaladas**: `pydantic-settings`, `beautifulsoup4`, `diskcache`, `pandas`, `nbformat`, `python-json-logger`
-- **Compatibilidad**: Soporte para scraping opcional y logging estructurado
+#### ✅ Web Scraping SIATA Histórico
+- **Mejorado**: Cliente SIATA con scraping de datos históricos
+- **Nuevo método**: `get_historical_weather(days=7)` para datos pasados
+- **Integración**: Datos históricos junto con servicios gratuitos
+- **Compatibilidad**: Fallback automático si scraping falla
 
 ## �📄 Licencia
 
