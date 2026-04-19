@@ -1,4 +1,19 @@
 # ClimAPI Requirements
+# Meteoblue
+requests
+requests_cache
+
+# Open-Meteo
+openmeteo-requests
+requests-cache
+retry-requests
+numpy
+pandas
+
+# SIATA
+beautifulsoup4  
+openpyxl
+lxml
 
 # Core
 fastapi>=0.104.0
@@ -18,15 +33,46 @@ numpy>=1.24.0
 diskcache>=5.6.0
 nbformat>=5.9.0
 
+# Para análisis de datos
+matplotlib
+seaborn
+scipy
+openpyxl
+# Machine Learning
+scikit-learn
+jupyter
+
+# Cloud and radar (optional)
+boto3>=1.28.0
+# arm-pyart>=1.14.0  # Windows not supported
+# AWS y datos de radar
+botocore
+
+# Image processing (IDEAM radar)
+Pillow
+
+# Procesamiento de datos de radar (opcional pero recomendado)
+arm-pyart
+
+# Alternativas para procesamiento de radar
+wradlib
+netCDF4
+xarray
+
+# Visualizaciones interactivas
+plotly
+kaleido
+
+# Utilidades
+tqdm
+
 # Dashboard and mapping
 streamlit>=1.29.0
 plotly>=5.18.0
 folium>=0.14.0
 streamlit-folium>=0.4.0
+streamlit-option-menu>=0.3.0
 
-# Cloud and radar (optional)
-boto3>=1.28.0
-# arm-pyart>=1.14.0  # Windows not supported
 
 # Storage
 pyarrow>=14.0.0
