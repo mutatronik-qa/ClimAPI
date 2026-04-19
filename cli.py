@@ -135,24 +135,27 @@ def cmd_save(args):
     service = get_service()
     
     # Get data from all sources
-    result = service.get_weather(args.lat, args.lat, use_cache=not args.no_cache)
+    result = service.get_weather(args.lat, args.lon, use_cache=not args.no_cache)
+    saved = False
     
     if result.get("temperature"):
         service.save_data(result)
-        
-        # Also save all sources individually
-        for src_name in SOURCES:
-            src_result = service._call_source(src_name, args.lat, args.lon)
-            if src_result.get("temperature"):
-                service.save_data(src_result)
-        
-        print(f"✅ Data saved successfully")
-        print(f"   - Raw data: data/raw/")
-        print(f"   - Merged data: data/processed/weather.csv")
-    else:
+        saved = True
+    
+    # Save all sources individually, including radar metadata and SIATA results
+    for src_name in SOURCES:
+        src_result = service._call_source(src_name, args.lat, args.lon)
+        if src_result.get("source"):
+            service.save_data(src_result)
+            saved = True
+    
+    if not saved:
         print(f"❌ No data to save")
         return 1
-    
+
+    print(f"✅ Data saved successfully")
+    print(f"   - Raw data: data/raw/")
+    print(f"   - Merged data: data/processed/weather.csv")
     return 0
 
 

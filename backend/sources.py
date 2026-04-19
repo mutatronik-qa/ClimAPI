@@ -127,6 +127,50 @@ def get_weather_openweathermap(lat: float, lon: float, **kwargs) -> Dict[str, An
 
 
 # ====================
+# MeteoSource (Requires API Key)
+# ====================
+
+def get_weather_meteosource(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
+    """MeteoSource - requires API key from environment."""
+    api_key = os.getenv("METEOSOURCE_API_KEY")
+
+    if not api_key:
+        return _result({}, "meteosource", "API key not set")
+
+    url = "https://www.meteosource.com/api/v1/free/point"
+    params = {
+        "key": api_key,
+        "units": kwargs.get("units", "metric")
+    }
+
+    # Support both place_id and lat/lon coordinates
+    if kwargs.get("place_id"):
+        params["place_id"] = kwargs["place_id"]
+    else:
+        params["lat"] = lat
+        params["lon"] = lon
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        current = data.get("current", {})
+        return _result({
+            "timestamp": current.get("time", datetime.now().isoformat()),
+            "temperature": current.get("temperature"),
+            "humidity": current.get("humidity"),
+            "precipitation": current.get("precipitation", 0),
+            "wind_speed": current.get("wind_speed"),
+        }, "meteosource")
+
+    except Exception as e:
+        logger.warning(f"MeteoSource failed: {e}")
+        return _result({}, "meteosource", str(e))
+
+
+# ====================
 # MeteoBlue (Requires API Key)
 # ====================
 
@@ -207,24 +251,43 @@ def get_weather_siata(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
 # IDEAM Radar (Optional)
 # ====================
 
+try:
+    import boto3
+    from botocore import UNSIGNED
+    from botocore.config import Config
+    BOTO3_AVAILABLE = True
+except ImportError:
+    boto3 = None
+    Config = None
+    UNSIGNED = None
+    BOTO3_AVAILABLE = False
+
+
 def get_weather_radar(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
-    """IDEAM Radar - AWS S3 public bucket."""
-    cmd = [
-        "aws",
-        "s3",
-        "ls",
-        "--no-sign-request",
-        "s3://s3-radaresideam/"
-    ]
+    """IDEAM Radar - AWS S3 public bucket using boto3 unsigned access."""
+    bucket_name = os.getenv("IDEAM_RADAR_BUCKET", "s3-radaresideam")
+    prefix = kwargs.get("prefix", "")
+    timeout = kwargs.get("timeout", 20)
+
+    if not BOTO3_AVAILABLE:
+        return _result({}, "ideam_radar", "boto3 is not installed")
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "AWS CLI error")
+        s3 = boto3.client(
+            "s3",
+            config=Config(signature_version=UNSIGNED)
+        )
 
-        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        sample = lines[:5]
-        files_count = len(lines)
+        paginator = s3.get_paginator("list_objects_v2")
+        page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+
+        files = []
+        for page in page_iterator:
+            for obj in page.get("Contents", []):
+                files.append(obj.get("Key"))
+
+        files_count = len(files)
+        sample = files[:5]
         note = f"Radar index found: {files_count} objects"
 
         return _result({
@@ -250,13 +313,14 @@ def get_weather_radar(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
 SOURCES = {
     "open-meteo": get_weather_open_meteo,
     "openweathermap": get_weather_openweathermap,
+    "meteosource": get_weather_meteosource,
     "meteoblue": get_weather_meteoblue,
     "siata": get_weather_siata,
     "ideam-radar": get_weather_radar,
 }
 
 # Priority order for merging (first valid wins)
-PRIORITY = ["open-meteo", "openweathermap", "meteoblue", "siata", "ideam-radar"]
+PRIORITY = ["open-meteo", "openweathermap", "meteosource", "meteoblue", "siata", "ideam-radar"]
 
 
 def get_source(name: str):
@@ -276,9 +340,21 @@ def list_sources() -> list:
 def _safe_get(arr: list, idx: int) -> Optional[float]:
     """Safely get float from list."""
     try:
-        if idx >= len(arr) or arr is None:
+        if arr is None or idx >= len(arr):
             return None
         val = arr[idx]
         return float(val) if val is not None else None
     except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _find_html_value(html: str, pattern: str) -> Optional[float]:
+    """Extract a numeric weather value from SIATA HTML."""
+    match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        return float(match.group(1))
+    except (ValueError, TypeError):
         return None

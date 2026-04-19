@@ -100,6 +100,9 @@ class WeatherService:
             result = source_func(lat, lon, **kwargs)
             elapsed = time.time() - start
             
+            result["lat"] = lat
+            result["lon"] = lon
+            
             if result.get("error"):
                 logger.warning(f"❌ {source_name}: {result['error']} ({elapsed:.2f}s)")
             else:
@@ -123,7 +126,7 @@ class WeatherService:
         lon: float,
         **kwargs
     ) -> Dict[str, Any]:
-        """Call all sources concurrently and merge."""
+        """Call all sources concurrently and merge results."""
         results: List[Dict[str, Any]] = []
         
         def fetch(name: str) -> tuple[str, Dict[str, Any], float]:
@@ -131,6 +134,8 @@ class WeatherService:
             try:
                 func = get_source(name)
                 data = func(lat, lon, **kwargs)
+                data["lat"] = lat
+                data["lon"] = lon
                 elapsed = time.time() - start
                 
                 status = "✅" if not data.get("error") and data.get("temperature") else "❌"
@@ -150,22 +155,47 @@ class WeatherService:
                 name, data, elapsed = future.result()
                 results.append(data)
         
-        # Get first valid result (priority order)
-        valid = [r for r in results if r.get("temperature") is not None]
+        # Merge all valid results
+        merged = self._merge_results(results)
+        merged["all_sources"] = results
+        merged["sources_responded"] = [r["source"] for r in results if not r.get("error") and r.get("temperature") is not None]
+        merged["sources_failed"] = [r["source"] for r in results if r.get("error") or r.get("temperature") is None]
         
-        if valid:
-            primary = valid[0].copy()
-            primary["all_sources"] = results
-            primary["sources_responded"] = [r["source"] for r in valid]
-            primary["sources_failed"] = [r["source"] for r in results if r.get("error")]
-            return primary
+        return merged
+    
+    def _merge_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge results from multiple sources by averaging numeric values."""
+        valid_results = [r for r in results if not r.get("error") and r.get("temperature") is not None]
         
-        # All failed
-        return {
-            "error": "All sources failed",
-            "all_sources": results,
-            "timestamp": datetime.now().isoformat()
+        if not valid_results:
+            return {
+                "error": "All sources failed",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Collect all numeric values
+        temperatures = [r["temperature"] for r in valid_results if r.get("temperature") is not None]
+        humidities = [r["humidity"] for r in valid_results if r.get("humidity") is not None]
+        precipitations = [r["precipitation"] for r in valid_results if r.get("precipitation") is not None]
+        wind_speeds = [r["wind_speed"] for r in valid_results if r.get("wind_speed") is not None]
+        
+        # Calculate averages
+        def avg(values: List[float]) -> Optional[float]:
+            return round(sum(values) / len(values), 2) if values else None
+        
+        merged = {
+            "timestamp": datetime.now().isoformat(),
+            "temperature": avg(temperatures),
+            "humidity": avg(humidities),
+            "precipitation": avg(precipitations),
+            "wind_speed": avg(wind_speeds),
+            "source": "merged",
+            "lat": valid_results[0].get("lat"),
+            "lon": valid_results[0].get("lon"),
+            "sources_used": len(valid_results)
         }
+        
+        return merged
     
     def get_sources_status(self) -> List[Dict[str, Any]]:
         """Check health of all sources."""
@@ -220,7 +250,7 @@ class WeatherService:
         """Append data to CSV."""
         import os
         
-        fieldnames = ["timestamp", "temperature", "humidity", "precipitation", "wind_speed", "source"]
+        fieldnames = ["timestamp", "temperature", "humidity", "precipitation", "wind_speed", "source", "lat", "lon"]
         write_header = not os.path.exists(filepath)
         
         with open(filepath, "a", newline="", encoding="utf-8") as f:
@@ -233,7 +263,9 @@ class WeatherService:
                 "humidity": data.get("humidity"),
                 "precipitation": data.get("precipitation"),
                 "wind_speed": data.get("wind_speed"),
-                "source": data.get("source", "unknown")
+                "source": data.get("source", "unknown"),
+                "lat": data.get("lat"),
+                "lon": data.get("lon")
             })
     
     def clear_cache(self) -> None:

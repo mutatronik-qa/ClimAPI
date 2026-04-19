@@ -5,6 +5,7 @@ Non-blocking with caching.
 """
 import os
 import sys
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -179,16 +180,182 @@ def show_sources():
             st.write(f"**Response Time:** {src.get('response_time', 'N/A'):.3f}s")
 
 
+def _get_data_path() -> Path:
+    return Path(ROOT_DIR) / "data"
+
+
+def _load_source_history(source: str, limit: int = 100) -> pd.DataFrame | None:
+    data_dir = _get_data_path()
+    raw_path = data_dir / "raw" / f"{source}.csv"
+    processed_path = data_dir / "processed" / "weather.csv"
+    path_to_read = None
+
+    if raw_path.exists():
+        path_to_read = raw_path
+    elif processed_path.exists():
+        path_to_read = processed_path
+    else:
+        return None
+
+    try:
+        df = pd.read_csv(
+            path_to_read,
+            parse_dates=["timestamp"],
+            infer_datetime_format=True,
+            on_bad_lines="skip",
+            engine="python"
+        )
+    except Exception:
+        return None
+
+    if df.empty:
+        return None
+
+    if path_to_read == processed_path:
+        if "source" not in df.columns:
+            return None
+        df = df[df["source"] == source]
+        if df.empty:
+            return None
+
+    return df.sort_values("timestamp").tail(limit)
+
+
+def _get_ideam_radar_sites() -> list[dict]:
+    return [
+        {"name": "Radar IDEAM - Medellín", "lat": 6.244, "lon": -75.581, "info": "Región Valle de Aburrá"},
+        {"name": "Radar IDEAM - Bogotá", "lat": 4.711, "lon": -74.072, "info": "Región Cundinamarca"},
+        {"name": "Radar IDEAM - Cali", "lat": 3.4516, "lon": -76.532, "info": "Región Valle del Cauca"},
+        {"name": "Radar IDEAM - Barranquilla", "lat": 10.9685, "lon": -74.7813, "info": "Región Caribe"},
+    ]
+
+
+@st.cache_data(ttl=60)
+def fetch_radar_status(lat: float, lon: float):
+    """Fetch IDEAM radar metadata."""
+    try:
+        return service.get_weather(lat=lat, lon=lon, source="ideam-radar", use_cache=True)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@st.cache_data(ttl=300)
+def fetch_siata_history(limit: int = 100):
+    """Load saved SIATA history from the local data folder."""
+    return _load_source_history("siata", limit)
+
+
+def render_radar_page():
+    """Render radar and SIATA history page."""
+    st.title("🛰️ Radar IDEAM y SIATA")
+    st.markdown("---")
+    st.markdown(
+        "Visualiza los radares IDEAM con los puntos históricos ya consultados y el historial guardado de SIATA."
+    )
+
+    presets = {
+        "Medellín": (6.244, -75.581),
+        "Bogotá": (4.711, -74.072),
+        "Cali": (3.4516, -76.532),
+        "Barranquilla": (10.9685, -74.7813),
+        "Custom": (None, None)
+    }
+    city = st.selectbox("Ciudad base", list(presets.keys()), index=0)
+
+    if city == "Custom":
+        lat = st.number_input("Latitud", value=6.244, step=0.01, format="%.4f")
+        lon = st.number_input("Longitud", value=-75.581, step=0.01, format="%.4f")
+    else:
+        lat, lon = presets[city]
+
+    radar_sites = _get_ideam_radar_sites()
+    radar_status = fetch_radar_status(lat, lon)
+    siata_history = fetch_siata_history(limit=200)
+    ideam_history = _load_source_history("ideam-radar", limit=200)
+
+    st.markdown("### 🗺️ Radar IDEAM")
+    map_center = [lat, lon]
+    m = folium.Map(location=map_center, zoom_start=6)
+    folium.Marker([lat, lon], popup=f"<b>{city}</b><br>{lat}, {lon}", icon=folium.Icon(color="blue", icon="star")).add_to(m)
+
+    for radar in radar_sites:
+        folium.CircleMarker(
+            location=[radar["lat"], radar["lon"]],
+            radius=8,
+            color="orange",
+            fill=True,
+            fill_color="orange",
+            popup=f"<b>{radar['name']}</b><br>{radar['info']}",
+        ).add_to(m)
+
+    if ideam_history is not None and not ideam_history.empty:
+        st.markdown("#### Búsquedas IDEAM guardadas")
+        history_count = len(ideam_history)
+        st.write(f"Se han guardado {history_count} búsquedas IDEAM con coordenadas.")
+        for _, row in ideam_history.iterrows():
+            lat_hist = row.get("lat")
+            lon_hist = row.get("lon")
+            if pd.notna(lat_hist) and pd.notna(lon_hist):
+                folium.CircleMarker(
+                    location=[lat_hist, lon_hist],
+                    radius=5,
+                    color="blue",
+                    fill=True,
+                    fill_color="blue",
+                    popup=f"<b>IDEAM búsqueda</b><br>{row.get('timestamp', '')}",
+                ).add_to(m)
+
+    st_folium(m, width=700, height=450)
+
+    st.markdown("### 📌 Estado de la última búsqueda IDEAM")
+    if radar_status.get("error"):
+        st.error(f"No se pudo consultar IDEAM radar: {radar_status['error']}")
+    else:
+        st.write(f"**Fuente:** {radar_status.get('source', 'ideam-radar')}")
+        st.write(f"**Objetos encontrados:** {radar_status.get('files_count', 'N/A')}")
+        st.write(f"**Nota:** {radar_status.get('note', 'Sin nota disponible')}")
+        if radar_status.get("sample_files"):
+            st.write("**Archivos de ejemplo:**")
+            for obj in radar_status["sample_files"]:
+                st.write(f"- {obj}")
+
+    st.markdown("---")
+    st.markdown("### 📈 Historial de SIATA")
+
+    if siata_history is None or siata_history.empty:
+        st.info(
+            "No hay historial local de SIATA. Guarda datos con `python cli.py save --lat 6.24 --lon -75.58` para activar el historial."
+        )
+    else:
+        siata_history = siata_history.sort_values("timestamp")
+        siata_history["timestamp"] = pd.to_datetime(siata_history["timestamp"], errors="coerce")
+        siata_display = siata_history.copy()
+
+        if "temperature" in siata_display.columns:
+            chart_columns = [col for col in ["temperature", "humidity"] if col in siata_display.columns]
+            siata_plot = siata_display.set_index("timestamp")[chart_columns]
+            if not siata_plot.empty:
+                st.line_chart(siata_plot)
+
+        st.markdown("#### Últimos registros SIATA")
+        st.dataframe(
+            siata_display[[col for col in ["timestamp", "temperature", "humidity", "precipitation", "wind_speed"] if col in siata_display.columns]].tail(15),
+            use_container_width=True
+        )
+
+
 def main():
     """Main entry."""
     st.sidebar.title("🧭 Navigation")
     
-    page = st.sidebar.radio("Go to:", ["Dashboard", "Sources"])
+    page = st.sidebar.radio("Go to:", ["Dashboard", "Sources", "Radar + SIATA"])
     
     if page == "Dashboard":
         show_dashboard()
-    else:
+    elif page == "Sources":
         show_sources()
+    else:
+        render_radar_page()
 
 
 if __name__ == "__main__":
