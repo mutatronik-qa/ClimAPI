@@ -39,6 +39,38 @@ If you want radar metadata, install AWS CLI and use no-sign-request access.
 ### 3. Run the CLI
 
 ```bash
+ClimAPI CLI - Weather data from command line
+
+positional arguments:
+  {current,sources,save,history,test-source,advanced}
+                        Commands
+    current             Get current weather
+    sources             List all sources
+    save                Save weather data
+    history             Show historical data
+    test-source         Test a specific source
+    advanced            Advanced data using src/data_sources/ clients
+
+options:
+  -h, --help            show this help message and exit
+
+Examples:
+  python cli.py current --lat 6.24 --lon -75.58
+  python cli.py current --lat 6.24 --lon -75.58 --all-sources
+  python cli.py sources
+  python cli.py save --lat 6.24 --lon -75.58
+  python cli.py history
+  python cli.py test-source open-meteo
+
+  # Advanced (uses detailed src/data_sources/ clients)
+  python cli.py advanced open-meteo --detail forecast --days 7
+  python cli.py advanced open-meteo --detail historical --days 14
+  python cli.py advanced openweather --detail current
+  python cli.py advanced openweather --detail forecast
+  python cli.py advanced openweather --detail air
+  python cli.py advanced meteoblue --detail forecast
+  python cli.py advanced meteoblue --detail meteogram
+
 python cli.py current --lat 6.279552149570526 --lon -75.575345826297
 python cli.py sources
 python cli.py save --lat 6.279552149570526 --lon -75.575345826297

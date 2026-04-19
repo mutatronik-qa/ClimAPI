@@ -6,9 +6,9 @@ from typing import Dict, Any, Optional
 
 
 class SimpleCache:
-    """Simple TTL cache."""
+    """Simple TTL cache with optimized retention."""
 
-    def __init__(self, default_ttl: int = 900):
+    def __init__(self, default_ttl: int = 1800):
         self._cache: Dict[str, tuple[Any, float]] = {}
         self.default_ttl = default_ttl
 

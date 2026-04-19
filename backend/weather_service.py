@@ -35,7 +35,7 @@ class WeatherService:
     - Returns merged or per-source data
     """
     
-    def __init__(self, cache_ttl: int = 900):
+    def __init__(self, cache_ttl: int = 1800):
         self.cache = SimpleCache(cache_ttl)
         self.default_ttl = cache_ttl
     
@@ -126,7 +126,7 @@ class WeatherService:
         lon: float,
         **kwargs
     ) -> Dict[str, Any]:
-        """Call all sources concurrently and merge results."""
+        """Call all sources concurrently with timeout."""
         results: List[Dict[str, Any]] = []
         
         def fetch(name: str) -> tuple[str, Dict[str, Any], float]:
@@ -147,15 +147,27 @@ class WeatherService:
                 logger.error(f"❌ {name}: {e}")
                 return (name, {"source": name, "error": str(e)}, elapsed)
         
-        # Concurrent fetch
+        # Concurrent fetch with reasonable timeout
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(fetch, name): name for name in SOURCES}
             
-            for future in as_completed(futures):
-                name, data, elapsed = future.result()
-                results.append(data)
+            # Wait max 15 seconds total, collect results as they come
+            try:
+                for future in as_completed(futures, timeout=15):
+                    try:
+                        name, data, elapsed = future.result(timeout=10)
+                        results.append(data)
+                    except Exception as e:
+                        name = futures.get(future, "unknown")
+                        logger.warning(f"⚠️ {name} timeout/error: {e}")
+                        results.append({"source": name, "error": f"Timeout: {str(e)}"})
+            except TimeoutError:
+                logger.warning("⚠️ Sources batch timeout (15s) - returning partial results")
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
         
-        # Merge all valid results
+        # Merge all valid results (even partial)
         merged = self._merge_results(results)
         merged["all_sources"] = results
         merged["sources_responded"] = [r["source"] for r in results if not r.get("error") and r.get("temperature") is not None]
@@ -198,31 +210,53 @@ class WeatherService:
         return merged
     
     def get_sources_status(self) -> List[Dict[str, Any]]:
-        """Check health of all sources."""
+        """Check health of all sources with aggressive timeout."""
         status = []
         test_lat, test_lon = 6.244, -75.581  # Medellín
         
-        for name in SOURCES:
+        def check_source(name: str) -> Dict[str, Any]:
             start = time.time()
             try:
                 result = get_source(name)(test_lat, test_lon)
                 elapsed = time.time() - start
                 
-                status.append({
+                return {
                     "name": name,
                     "available": result.get("temperature") is not None,
                     "response_time": elapsed,
                     "error": result.get("error")
-                })
+                }
             except Exception as e:
-                status.append({
+                elapsed = time.time() - start
+                return {
                     "name": name,
                     "available": False,
-                    "response_time": time.time() - start,
+                    "response_time": elapsed,
                     "error": str(e)
-                })
+                }
         
-        return status
+        # Concurrent check with AGGRESSIVE timeouts
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(check_source, name): name for name in SOURCES}
+            
+            # Wait max 3 seconds per source, 5 seconds total for all
+            try:
+                for future in as_completed(futures, timeout=5):
+                    try:
+                        result = future.result(timeout=3)
+                        status.append(result)
+                    except Exception as e:
+                        name = futures.get(future, "unknown")
+                        status.append({
+                            "name": name,
+                            "available": False,
+                            "response_time": 3.0,
+                            "error": f"Timeout: {str(e)}"
+                        })
+            except Exception as e:
+                logger.warning(f"Source status check timeout: {e}")
+        
+        return status if status else [{"name": name, "available": False, "response_time": 0, "error": "Timeout"} for name in SOURCES]
     
     def save_data(self, data: Dict[str, Any], source: str = "combined") -> None:
         """Save data to CSV."""

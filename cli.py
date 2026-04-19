@@ -233,6 +233,117 @@ def cmd_test_source(args):
     return 0
 
 
+# ====================
+# Advanced Commands (uses src/data_sources/)
+# ====================
+
+def cmd_advanced(args):
+    """Advanced weather data using detailed clients from src/data_sources/."""
+    from src.data_sources.open_meteo import OpenMeteoClient
+    from src.data_sources.openweather import OpenWeatherMapClient
+    from src.data_sources.meteoblue import MeteoblueClient
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    service_type = args.service
+    lat = args.lat or 6.244
+    lon = args.lon or -75.581
+    location_name = args.location or "location"
+    
+    print_header(f"Advanced: {service_type} - {location_name} ({lat}, {lon})")
+    
+    try:
+        if service_type == "open-meteo":
+            # Open-Meteo: forecast + historical
+            client = OpenMeteoClient()
+            
+            if args.detail == "forecast":
+                result = client.get_forecast(lat, lon, location_name, days=args.days or 7)
+                if result.get("daily") is not None:
+                    print("\n📅 Daily Forecast:")
+                    df = result["daily"]
+                    for i, row in df.iterrows():
+                        print(f"   {row['date']}: {row.get('temperature_2m_min', 'N/A')}° - {row.get('temperature_2m_max', 'N/A')}°C")
+                return 0
+                
+            elif args.detail == "historical":
+                from datetime import datetime, timedelta
+                end = datetime.now() - timedelta(days=1)
+                start = end - timedelta(days=args.days or 14)
+                result = client.get_historical(lat, lon, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), location_name)
+                print(f"📊 Historical data: {start.date()} to {end.date()}")
+                return 0
+                
+        elif service_type == "openweather":
+            # OpenWeatherMap: current + 5day + air quality
+            api_key = os.getenv("OPENWEATHER_API_KEY")
+            if not api_key:
+                print("❌ OPENWEATHER_API_KEY not set in .env")
+                return 1
+                
+            client = OpenWeatherMapClient(api_key)
+            
+            if args.detail == "current":
+                result = client.get_current_weather(lat, lon, location_name)
+                print(f"🌡️  Temperature: {result['temperature']['current']}°C")
+                print(f"💧  Humidity: {result['humidity']}%")
+                print(f"🌤️  Weather: {result['weather']['description']}")
+                print(f"💨  Wind: {result['wind']['speed']} m/s")
+                return 0
+                
+            elif args.detail == "forecast":
+                result = client.get_forecast_5day(lat, lon, location_name)
+                print(f"\n📅 5-Day Forecast:")
+                for item in result["forecast"][:10]:
+                    print(f"   {item['date']} {item['time']}: {item['temperature']['temp']}°C - {item['weather']['main']}")
+                return 0
+                
+            elif args.detail == "air":
+                result = client.get_air_pollution(lat, lon, location_name)
+                print(f"🏭 AQI: {result['aqi']['value']} - {result['aqi']['label']}")
+                print(f"   PM2.5: {result['components']['pm2_5']} μg/m³")
+                return 0
+                
+        elif service_type == "meteoblue":
+            # Meteoblue: forecast + meteogram image
+            api_key = os.getenv("METEOBLUE_API_KEY")
+            secret = os.getenv("METEOBLUE_SHARED_SECRET")
+            if not api_key or not secret:
+                print("❌ METEOBLUE_API_KEY and METEOBLUE_SHARED_SECRET not set")
+                return 1
+                
+            client = MeteoblueClient(api_key, secret)
+            
+            if args.detail == "forecast":
+                result = client.get_forecast(lat, lon, asl=args.asl or 1400, location_name=location_name, save_data=False)
+                if "data_day" in result:
+                    data = result["data_day"]
+                    times = data.get("time", [])
+                    temp_min = data.get("temperature_min", [])
+                    temp_max = data.get("temperature_max", [])
+                    print(f"\n📅 Forecast (next 3 days):")
+                    for i in range(min(3, len(times))):
+                        tmin = temp_min[i] if i < len(temp_min) else "N/A"
+                        tmax = temp_max[i] if i < len(temp_max) else "N/A"
+                        print(f"   {times[i]}: {tmin}° - {tmax}°C")
+                return 0
+                
+            elif args.detail == "meteogram":
+                image = client.get_meteogram_image(lat, lon, asl=args.asl or 1400, location_name=location_name, save_image=True)
+                print(f"🖼️  Meteogram saved to data/images_meteo_blue/")
+                return 0
+                
+        print(f"❌ Unknown detail: {args.detail}")
+        return 1
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -246,6 +357,15 @@ Examples:
   python cli.py save --lat 6.24 --lon -75.58
   python cli.py history
   python cli.py test-source open-meteo
+  
+  # Advanced (uses detailed src/data_sources/ clients)
+  python cli.py advanced open-meteo --detail forecast --days 7
+  python cli.py advanced open-meteo --detail historical --days 14
+  python cli.py advanced openweather --detail current
+  python cli.py advanced openweather --detail forecast
+  python cli.py advanced openweather --detail air
+  python cli.py advanced meteoblue --detail forecast
+  python cli.py advanced meteoblue --detail meteogram
         """
     )
     
@@ -283,6 +403,18 @@ Examples:
     test_parser.add_argument("--lat", type=float, help="Latitude")
     test_parser.add_argument("--lon", type=float, help="Longitude")
     test_parser.set_defaults(func=cmd_test_source)
+    
+    # advanced command
+    adv_parser = subparsers.add_parser("advanced", help="Advanced data using src/data_sources/ clients")
+    adv_parser.add_argument("service", choices=["open-meteo", "openweather", "meteoblue"], help="Service to use")
+    adv_parser.add_argument("--detail", type=str, required=True, 
+                       help="Detail type: forecast, historical (open-meteo) | current, forecast, air (openweather) | forecast, meteogram (meteoblue)")
+    adv_parser.add_argument("--lat", type=float, default=6.244, help="Latitude")
+    adv_parser.add_argument("--lon", type=float, default=-75.581, help="Longitude")
+    adv_parser.add_argument("--location", type=str, help="Location name")
+    adv_parser.add_argument("--days", type=int, help="Number of days")
+    adv_parser.add_argument("--asl", type=int, default=1400, help="Altitude above sea level")
+    adv_parser.set_defaults(func=cmd_advanced)
     
     args = parser.parse_args()
     

@@ -1,11 +1,10 @@
 # ClimAPI Requirements
 # Meteoblue
 requests
-requests_cache
+requests-cache>=1.1.5
 
 # Open-Meteo
 openmeteo-requests
-requests-cache
 retry-requests
 numpy
 pandas
