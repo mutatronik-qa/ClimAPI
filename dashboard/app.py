@@ -11,7 +11,12 @@ import pandas as pd
 import plotly.express as px
 import folium
 from streamlit_folium import st_folium
+import logging
 from datetime import datetime
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Make sure backend package is importable when running from dashboard folder
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -39,19 +44,12 @@ def fetch_weather(lat: float, lon: float, source: str = None):
         return {"error": str(e)}
 
 
-@st.cache_data(ttl=600)
-def fetch_sources():
-    """Fetch sources status - cached (10 min)."""
+@st.cache_data(ttl=300)
+def fetch_sources(fast: bool = True):
+    """Fetch sources status - cached (5 min) with optimized speed."""
     try:
-        status = service.get_sources_status()
-        return [
-            {
-                "name": s["name"],
-                "available": s["available"],
-                "response_time": round(s["response_time"], 3)
-            }
-            for s in status
-        ]
+        status = service.get_sources_status(use_cache=True, fast=fast)
+        return status
     except:
         return []
 
@@ -130,9 +128,33 @@ def show_dashboard():
         st.metric("Wind", f"{data.get('wind_speed', 'N/A')} km/h" if data.get("wind_speed") else "N/A")
     
     st.caption(f"Source: {data.get('source', 'unknown')}")
+
+    # --- NEW: Historical Analysis Section ---
+    st.markdown("---")
+    st.markdown("### 📈 Historical Analysis")
+    history_df = _load_source_history(data.get("source", "combined"), limit=50)
+    
+    if history_df is not None and not history_df.empty:
+        col_chart, col_stats = st.columns([2, 1])
+        with col_chart:
+            # Simple line chart for temperature
+            fig = px.line(history_df, x="timestamp", y="temperature", title="Temperature Trend")
+            st.plotly_chart(fig, use_container_width=True)
+        with col_stats:
+            st.markdown("#### Stats")
+            # Ensure temperature is numeric for stats
+            temp_numeric = pd.to_numeric(history_df['temperature'], errors='coerce').dropna()
+            if not temp_numeric.empty:
+                st.write(f"**Records:** {len(history_df)}")
+                st.write(f"**Avg Temp:** {temp_numeric.mean():.2f}°C")
+                st.write(f"**Max Temp:** {temp_numeric.max():.2f}°C")
+            else:
+                st.write("No numeric temperature data.")
+    else:
+        st.info("No historical data available for this source yet.")
     
     # Lazy load with tabs for heavy components
-    tab1, tab2, tab3 = st.tabs(["📍 Map", "📊 Comparison", "📋 Details"])
+    tab1, tab2, tab3 = st.tabs(["📍 Map & History", "📊 Sources Comparison", "📋 Raw Data"])
     
     with tab1:
         st.markdown("### 🗺️ Location Map")
@@ -141,11 +163,28 @@ def show_dashboard():
             
             with col_map:
                 m = folium.Map(location=[lat, lon], zoom_start=10)
+                # Current marker
                 folium.Marker(
                     [lat, lon],
-                    popup=f"<b>{city}</b><br>{lat}, {lon}",
-                    icon=folium.Icon(color="blue", icon="info-sign")
+                    popup=f"<b>Current: {city}</b><br>{lat}, {lon}",
+                    icon=folium.Icon(color="red", icon="info-sign")
                 ).add_to(m)
+                
+                # Historical markers
+                all_history = _load_source_history("combined", limit=200)
+                if all_history is not None and not all_history.empty:
+                    # Filter unique locations to avoid clutter
+                    unique_locs = all_history.drop_duplicates(subset=["lat", "lon"])
+                    for _, row in unique_locs.iterrows():
+                        if row["lat"] == lat and row["lon"] == lon: continue # skip current
+                        folium.CircleMarker(
+                            location=[row["lat"], row["lon"]],
+                            radius=5,
+                            color="blue",
+                            fill=True,
+                            popup=f"History: {row.get('timestamp')}<br>{row.get('temperature')}°C",
+                        ).add_to(m)
+                
                 st_folium(m, width=600, height=400)
             
             with col_info:
@@ -166,7 +205,7 @@ def show_dashboard():
                         "Temperature": f"{src.get('temperature', 'N/A')}°C" if src.get("temperature") else "N/A",
                         "Humidity": f"{src.get('humidity', 'N/A')}%" if src.get("humidity") else "N/A",
                         "Wind": f"{src.get('wind_speed', 'N/A')} km/h" if src.get("wind_speed") else "N/A",
-                        "Status": "✅" if src.get("temperature") else "❌"
+                        "Status": "✅" if src.get("available") else "❌"
                     })
                 
                 st.dataframe(pd.DataFrame(rows), use_container_width=True)
@@ -180,23 +219,51 @@ def show_dashboard():
 
 def show_sources():
     """Sources status page with lazy loading."""
-    st.title("📡 Weather Sources")
+    st.title("📡 API Integrity & Status")
     st.markdown("---")
-    st.info("⏳ Checking sources health (can take 10-15 seconds)...")
     
-    with st.spinner("🔍 Checking all sources..."):
-        sources = fetch_sources()
+    col_ctrl1, col_ctrl2 = st.columns([2, 1])
+    with col_ctrl1:
+        check_type = st.radio("Check Type", ["Quick (3-5s)", "Full (10-15s)"], horizontal=True)
+    with col_ctrl2:
+        if st.button("🔄 Force Re-check"):
+            st.cache_data.clear()
+            fetch_sources.clear()
+            
+    is_fast = "Quick" in check_type
+    
+    st.info(f"⏳ Checking sources health ({check_type})...")
+    
+    with st.spinner("🔍 Verifying all API endpoints..."):
+        sources = fetch_sources(fast=is_fast)
     
     if not sources:
-        st.error("❌ Could not check sources. Some APIs may be down.")
+        st.error("❌ Could not check sources. System might be offline or services are unreachable.")
         return
     
+    # Summary metrics
+    available_count = sum(1 for s in sources if s.get("available"))
+    avg_resp = sum(s.get("response_time", 0) for s in sources) / len(sources)
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Available", f"{available_count}/{len(sources)}")
+    m2.metric("Avg Response", f"{avg_resp:.2f}s")
+    m3.metric("System Integrity", "Healthy" if available_count > 2 else "Degraded", delta=None)
+    
+    st.markdown("### Source Details")
     for src in sources:
         status = "🟢 Available" if src.get("available") else "🔴 Unavailable"
         
         with st.expander(f"{src['name']} - {status}"):
-            st.write(f"**Available:** {src['available']}")
+            st.write(f"**Status:** {'✅ Online' if src.get('available') else '❌ Offline/Error'}")
             st.write(f"**Response Time:** {src.get('response_time', 'N/A'):.3f}s")
+            if src.get("error"):
+                st.error(f"**Error Details:** {src['error']}")
+            
+            # Show last check time if available
+            if src.get("_checked_at"):
+                dt = datetime.fromtimestamp(src["_checked_at"])
+                st.caption(f"Last checked: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 def _get_data_path() -> Path:

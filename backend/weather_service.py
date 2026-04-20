@@ -38,6 +38,8 @@ class WeatherService:
     def __init__(self, cache_ttl: int = 1800):
         self.cache = SimpleCache(cache_ttl)
         self.default_ttl = cache_ttl
+        self._health_cache = {}
+        self._health_cache_ttl = 300  # 5 minutes
     
     def get_weather(
         self,
@@ -185,15 +187,28 @@ class WeatherService:
                 "timestamp": datetime.now().isoformat()
             }
         
-        # Collect all numeric values
-        temperatures = [r["temperature"] for r in valid_results if r.get("temperature") is not None]
-        humidities = [r["humidity"] for r in valid_results if r.get("humidity") is not None]
-        precipitations = [r["precipitation"] for r in valid_results if r.get("precipitation") is not None]
-        wind_speeds = [r["wind_speed"] for r in valid_results if r.get("wind_speed") is not None]
+        # Collect all numeric values, ensuring they are indeed numbers
+        def get_numeric(results, key):
+            vals = []
+            for r in results:
+                val = r.get(key)
+                if val is not None and isinstance(val, (int, float)):
+                    vals.append(float(val))
+            return vals
+
+        temperatures = get_numeric(valid_results, "temperature")
+        humidities = get_numeric(valid_results, "humidity")
+        precipitations = get_numeric(valid_results, "precipitation")
+        wind_speeds = get_numeric(valid_results, "wind_speed")
         
-        # Calculate averages
+        # Calculate averages safely
         def avg(values: List[float]) -> Optional[float]:
-            return round(sum(values) / len(values), 2) if values else None
+            if not values: return None
+            try:
+                return round(sum(values) / len(values), 2)
+            except Exception as e:
+                logger.error(f"Error calculating average: {e}")
+                return None
         
         merged = {
             "timestamp": datetime.now().isoformat(),
@@ -209,22 +224,40 @@ class WeatherService:
         
         return merged
     
-    def get_sources_status(self) -> List[Dict[str, Any]]:
-        """Check health of all sources with aggressive timeout."""
+    def get_sources_status(self, use_cache: bool = True, fast: bool = False) -> List[Dict[str, Any]]:
+        """
+        Check health of all sources with aggressive timeout.
+        - fast=True uses very short timeouts (3s)
+        - use_cache=True returns cached status if still valid
+        """
+        now = time.time()
+        
+        # Check health cache
+        if use_cache and self._health_cache:
+            if all(now - s.get("_checked_at", 0) < self._health_cache_ttl for s in self._health_cache.values()):
+                logger.info("📡 Using cached sources status")
+                return list(self._health_cache.values())
+        
         status = []
         test_lat, test_lon = 6.244, -75.581  # Medellín
         
         def check_source(name: str) -> Dict[str, Any]:
             start = time.time()
             try:
-                result = get_source(name)(test_lat, test_lon)
+                # Use shorter timeouts for health check
+                timeout = 5 if fast else 10
+                result = get_source(name)(test_lat, test_lon, timeout=timeout, max_items=5)
                 elapsed = time.time() - start
+                
+                # radar source specifically might not return temperature but 'note'
+                is_available = result.get("temperature") is not None or (name == "ideam-radar" and result.get("files_count") is not None)
                 
                 return {
                     "name": name,
-                    "available": result.get("temperature") is not None,
+                    "available": is_available,
                     "response_time": elapsed,
-                    "error": result.get("error")
+                    "error": result.get("error"),
+                    "_checked_at": now
                 }
             except Exception as e:
                 elapsed = time.time() - start
@@ -232,31 +265,49 @@ class WeatherService:
                     "name": name,
                     "available": False,
                     "response_time": elapsed,
-                    "error": str(e)
+                    "error": str(e),
+                    "_checked_at": now
                 }
         
-        # Concurrent check with AGGRESSIVE timeouts
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        # Concurrent check
+        with ThreadPoolExecutor(max_workers=len(SOURCES)) as executor:
             futures = {executor.submit(check_source, name): name for name in SOURCES}
             
-            # Wait max 3 seconds per source, 5 seconds total for all
+            # Total timeout for the batch
+            batch_timeout = 8 if fast else 15
             try:
-                for future in as_completed(futures, timeout=5):
+                for future in as_completed(futures, timeout=batch_timeout):
                     try:
-                        result = future.result(timeout=3)
+                        result = future.result()
                         status.append(result)
+                        # Update cache
+                        self._health_cache[result["name"]] = result
                     except Exception as e:
                         name = futures.get(future, "unknown")
-                        status.append({
+                        err_result = {
                             "name": name,
                             "available": False,
-                            "response_time": 3.0,
-                            "error": f"Timeout: {str(e)}"
-                        })
+                            "response_time": batch_timeout,
+                            "error": f"Timeout/Error: {str(e)}",
+                            "_checked_at": now
+                        }
+                        status.append(err_result)
+                        self._health_cache[name] = err_result
             except Exception as e:
-                logger.warning(f"Source status check timeout: {e}")
+                logger.warning(f"Source status check batch timeout: {e}")
         
-        return status if status else [{"name": name, "available": False, "response_time": 0, "error": "Timeout"} for name in SOURCES]
+        # Fill missing
+        for name in SOURCES:
+            if name not in [s["name"] for s in status]:
+                status.append({
+                    "name": name, 
+                    "available": False, 
+                    "response_time": 0, 
+                    "error": "Not checked (batch timeout)",
+                    "_checked_at": now
+                })
+        
+        return status
     
     def save_data(self, data: Dict[str, Any], source: str = "combined") -> None:
         """Save data to CSV."""

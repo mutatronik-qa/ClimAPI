@@ -57,7 +57,8 @@ def get_weather_open_meteo(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
     }
     
     try:
-        with httpx.Client(timeout=10) as client:
+        timeout = kwargs.get("timeout", 10)
+        with httpx.Client(timeout=timeout) as client:
             response = client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -104,7 +105,8 @@ def get_weather_openweathermap(lat: float, lon: float, **kwargs) -> Dict[str, An
     params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
     
     try:
-        with httpx.Client(timeout=10) as client:
+        timeout = kwargs.get("timeout", 10)
+        with httpx.Client(timeout=timeout) as client:
             response = client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -151,7 +153,8 @@ def get_weather_meteosource(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
         params["lon"] = lon
 
     try:
-        with httpx.Client(timeout=15) as client:
+        timeout = kwargs.get("timeout", 15)
+        with httpx.Client(timeout=timeout) as client:
             response = client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -188,7 +191,8 @@ def get_weather_meteoblue(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
     )
     
     try:
-        with httpx.Client(timeout=15) as client:
+        timeout = kwargs.get("timeout", 15)
+        with httpx.Client(timeout=timeout) as client:
             response = client.get(url)
             response.raise_for_status()
             data = response.json()
@@ -220,7 +224,8 @@ def get_weather_siata(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
     url = os.getenv("SIATA_OPERACIONAL_URL", "https://www.siata.gov.co/operacional/#")
 
     try:
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
+        timeout = kwargs.get("timeout", 15)
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             response = client.get(url)
             response.raise_for_status()
             html = response.text
@@ -279,7 +284,9 @@ def get_weather_radar(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
         )
 
         paginator = s3.get_paginator("list_objects_v2")
-        page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+        # Optimization: only list few keys for health check
+        max_items = kwargs.get("max_items", 100)
+        page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix, PaginationConfig={'MaxItems': max_items})
 
         files = []
         for page in page_iterator:
