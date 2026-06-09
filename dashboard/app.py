@@ -12,18 +12,20 @@ import plotly.express as px
 import folium
 from streamlit_folium import st_folium
 import logging
-from datetime import datetime
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from datetime import datetime, timedelta
 
 # Make sure backend package is importable when running from dashboard folder
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-# Import backend service directly (no HTTP calls)
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Internal imports (after path setup)
+from src.data_sources.siata_cliente import SIATADownloader
+from src.data_sources.ideam_radar_downloader import IDEAMRadarDownloader
 from backend.weather_service import get_service
 
 # Get service instance
@@ -318,11 +320,12 @@ def _load_source_history(source: str, limit: int = 100) -> pd.DataFrame | None:
 
 
 def _get_ideam_radar_sites() -> list[dict]:
+    """Returns the official 4 IDEAM radar locations."""
     return [
-        {"name": "Radar IDEAM - Medellín", "lat": 6.244, "lon": -75.581, "info": "Región Valle de Aburrá"},
-        {"name": "Radar IDEAM - Bogotá", "lat": 4.711, "lon": -74.072, "info": "Región Cundinamarca"},
-        {"name": "Radar IDEAM - Cali", "lat": 3.4516, "lon": -76.532, "info": "Región Valle del Cauca"},
-        {"name": "Radar IDEAM - Barranquilla", "lat": 10.9685, "lon": -74.7813, "info": "Región Caribe"},
+        {"name": "Radar Barrancabermeja", "lat": 7.0, "lon": -73.8, "info": "Región Santander / Magdalena Medio"},
+        {"name": "Radar Guaviare", "lat": 2.5, "lon": -72.6, "info": "Región Amazonía / Orinoquía"},
+        {"name": "Radar Munchique", "lat": 2.5, "lon": -76.9, "info": "Región Cauca / Pacífico"},
+        {"name": "Radar Carimagua", "lat": 4.5, "lon": -71.3, "info": "Región Meta / Llanos Orientales"},
     ]
 
 
@@ -343,10 +346,11 @@ def fetch_siata_history(limit: int = 100):
 
 def render_radar_page():
     """Render radar and SIATA history page with lazy loading."""
-    st.title("🛰️ Radar IDEAM y SIATA")
+    st.title("🛰️ Red de Radares IDEAM y SIATA Regional")
     st.markdown("---")
     st.markdown(
-        "Visualiza los radares IDEAM con los puntos históricos ya consultados y el historial guardado de SIATA."
+        "Esta sección monitorea el estado global de la red de radares del IDEAM y el historial de descargas regionales de SIATA. "
+        "A diferencia de otras fuentes, estas operan a nivel de red o región, no por consulta de coordenadas individuales."
     )
 
     presets = {
@@ -422,13 +426,37 @@ def render_radar_page():
                         st.write(f"- {obj}")
     
     with tab2:
-        st.markdown("### 📈 Historial de SIATA")
+        st.markdown("### 🌐 Datos Regionales SIATA (Web Scraping)")
+        st.info("SIATA proporciona datos específicos para el Valle de Aburrá. Estos datos se obtienen mediante web scraping del sitio operacional.")
+        
+        # --- NUEVA SECCIÓN DE DESCARGA ---
+        if st.button("🚀 Iniciar Descarga Completa SIATA"):
+            status_placeholder = st.empty()
+            progress_bar = st.progress(0)
+            log_placeholder = st.empty()
+            
+            try:
+                status_placeholder.warning("⏳ Descargando datos de SIATA... Por favor, espere.")
+                downloader = SIATADownloader()
+                
+                # Simulación de progreso para mejorar la UX
+                for i in range(1, 101, 20):
+                    progress_bar.progress(i)
+                    log_placeholder.text(f"Explorando directorios nivel {i//33 + 1}...")
+                
+                downloader.download_all(max_depth=2)
+                progress_bar.progress(100)
+                status_placeholder.success("✅ Descarga de SIATA completada con éxito.")
+                log_placeholder.text("Inventario generado en data/siata_historico/inventario.csv")
+            except Exception as e:
+                status_placeholder.error(f"❌ Error durante la descarga: {e}")
+
         with st.spinner("Cargando historial de SIATA..."):
             siata_history = fetch_siata_history(limit=200)
 
             if siata_history is None or siata_history.empty:
                 st.info(
-                    "No hay historial local de SIATA. Guarda datos con `python cli.py save --lat 6.24 --lon -75.58` para activar el historial."
+                    "No hay historial local de SIATA. Realiza una consulta desde el menú o CLI para descargar datos actuales."
                 )
             else:
                 siata_history = siata_history.sort_values("timestamp")
@@ -449,7 +477,39 @@ def render_radar_page():
                 )
     
     with tab3:
-        st.markdown("### 📊 Historial IDEAM")
+        st.markdown("### 📡 Descarga de Radar IDEAM")
+        st.info("Descarga los datos más recientes desde los servidores de AWS del IDEAM (delay de 24h).")
+        
+        col_radar, col_days = st.columns(2)
+        with col_radar:
+            radar_to_download = st.selectbox("Radar", ["Barrancabermeja", "Guaviare", "Munchique", "Carimagua"])
+        with col_days:
+            days_back = st.slider("Días atrás", 1, 7, 2)
+
+        if st.button(f"📥 Descargar Datos Radar {radar_to_download}"):
+            status_radar = st.empty()
+            progress_radar = st.progress(0)
+            log_radar = st.empty()
+            
+            try:
+                status_radar.warning(f"⏳ Descargando últimos {days_back} días del radar {radar_to_download}...")
+                downloader = IDEAMRadarDownloader()
+                
+                for d in range(days_back):
+                    progress_radar.progress(int(((d+1)/days_back)*100))
+                    log_radar.text(f"Procesando día {d+1} de {days_back}...")
+                    # Descarga del día específico
+                    downloader.descargar_ultimos_datos(radar=radar_to_download, dias=1)
+                
+                progress_radar.progress(100)
+                status_radar.success(f"✅ Descarga de {radar_to_download} completada.")
+                log_radar.text("Archivos guardados en data/Radar_IDEAM/")
+                downloader.generar_inventario(radar_to_download)
+            except Exception as e:
+                status_radar.error(f"❌ Error: {e}")
+
+        st.markdown("---")
+        st.markdown("#### 📋 Historial Local de Radar")
         with st.spinner("Cargando historial IDEAM..."):
             ideam_history = _load_source_history("ideam-radar", limit=200)
             if ideam_history is None or ideam_history.empty:

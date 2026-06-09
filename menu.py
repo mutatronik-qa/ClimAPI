@@ -85,10 +85,14 @@ def menu_principal():
                 s_idx = int(input("\nSeleccione fuente (número): ")) - 1
                 source = list(SOURCES.keys())[s_idx]
 
-            print(f"\n📡 Consultando datos para {name}...")
+            if source in ["siata", "ideam-radar"]:
+                print(f"\n📡 Actualizando datos regionales/red ({source})...")
+            else:
+                print(f"\n📡 Consultando datos para {name}...")
+                
             result = service.get_weather(lat, lon, source=source)
             
-            if "error" in result and not result.get("temperature"):
+            if result.get("error"):
                 print(f"❌ Error: {result['error']}")
             else:
                 print(f"\n✅ Resultados ({result.get('source', 'múltiple')}):")

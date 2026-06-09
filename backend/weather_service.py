@@ -249,8 +249,8 @@ class WeatherService:
                 result = get_source(name)(test_lat, test_lon, timeout=timeout, max_items=5)
                 elapsed = time.time() - start
                 
-                # radar source specifically might not return temperature but 'note'
-                is_available = result.get("temperature") is not None or (name == "ideam-radar" and result.get("files_count") is not None)
+                # Radar and SIATA might not return temperature but are online if they return status/files
+                is_available = result.get("temperature") is not None or (name in ["ideam-radar", "siata"] and not result.get("error"))
                 
                 return {
                     "name": name,

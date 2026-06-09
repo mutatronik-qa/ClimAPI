@@ -58,6 +58,30 @@ class MeteoblueClient:
         
         return f"{self.base_url}{query}&sig={sig}"
     
+    def _signed_query_for_meteogram(self, lat, lon, asl, city, tz="America/Bogota", 
+                                    lang="es", dpi=72, look="CELSIUS_MILLIMETER_KILOMETER_PER_HOUR"):
+        """Genera una URL firmada para descargar un meteograma (método seguro)."""
+        expire = int((datetime.now() + timedelta(minutes=10)).timestamp())
+        city_enc = quote(city, safe="")
+        tz_enc = quote(tz, safe="")
+
+        query = (
+            f"/images/meteogram?lat={lat}&lon={lon}&asl={asl}"
+            f"&tz={tz_enc}&apikey={self.api_key}&expire={expire}"
+            f"&format=png&dpi={dpi}&lang={lang}&look={look}&city={city_enc}"
+        )
+
+        if not self.shared_secret:
+            return f"{self.base_url}{query}&secret_share=climapi"
+
+        sig = hmac.new(
+            self.shared_secret.encode(),
+            query.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        return f"{self.base_url}{query}&sig={sig}"
+    
     def get_forecast(self, lat: float, lon: float, asl: int = 0, 
                      expire: Optional[int] = None, 
                      save_data: bool = True,
