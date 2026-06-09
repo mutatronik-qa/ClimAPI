@@ -173,6 +173,19 @@ def get_weather_meteosource(lat: float, lon: float, **kwargs) -> Dict[str, Any]:
         return _result({}, "meteosource", str(e))
 
 
+import hmac
+import hashlib
+from urllib.parse import quote
+
+def _sign_meteoblue_query(query: str, secret: str) -> str:
+    """Signs a Meteoblue query using HMAC SHA256."""
+    sig = hmac.new(
+        secret.encode(),
+        query.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return f"{query}&sig={sig}"
+
 # ====================
 # MeteoBlue (Requires API Key)
 # ====================
